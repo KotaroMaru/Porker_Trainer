@@ -91,8 +91,8 @@ export function QuizView() {
   return (
     <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
-        <h2 style={{ color: 'var(--gold)', fontSize: 18 }}>一問一答</h2>
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <h2 style={{ color: 'var(--gold)', fontSize: 18, flexShrink: 0 }}>一問一答</h2>
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 1, paddingBottom: 2 }}>
           {(['preflop', 'tier', 'reraise', 'range'] as QuizMode[]).map(m => (
             <button
               key={m}
@@ -343,7 +343,7 @@ function PreflopQuiz({ reviewMode, wrongList, onWrong, onCorrect }: PreflopQuizP
       <ScoreBar {...score} />
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         {/* 左: 問題 */}
-        <div style={{ flex: '0 0 340px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 300px', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <MiniTableDiagram tableSize={q.tableSize} heroPosition={q.position} />
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -557,7 +557,7 @@ function ReraiseQuiz({ reviewMode, wrongList, onWrong, onCorrect }: ReraiseQuizP
       <ScoreBar {...score} />
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         {/* 左: 問題 */}
-        <div style={{ flex: '0 0 340px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 300px', maxWidth: 340, display: 'flex', flexDirection: 'column', gap: 14 }}>
           {/* テーブル図 */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
             <MiniTableDiagram tableSize={q.tableSize} heroPosition={q.position} raiserPosition={q.raiserPosition} />
@@ -756,7 +756,7 @@ function RangePredictionQuiz({ reviewMode, wrongList, onWrong, onCorrect }: Rang
 
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }}>
         {/* 左: シナリオ */}
-        <div style={{ flex: '0 0 240px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 220px', maxWidth: 240, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <MiniTableDiagram tableSize={q.tableSize} raiserPosition={q.raiserPosition} />
           {q.board.length > 0 && (
             <div style={{ display: 'flex', gap: 4 }}>
@@ -775,7 +775,7 @@ function RangePredictionQuiz({ reviewMode, wrongList, onWrong, onCorrect }: Rang
         </div>
 
         {/* 右: 候補グリッド */}
-        <div style={{ flex: 1, minWidth: 340, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ flex: '1 1 300px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' }}>
             {q.candidates.map((c, i) => {
               const isCorrect = answered !== null && i === q.correctIndex

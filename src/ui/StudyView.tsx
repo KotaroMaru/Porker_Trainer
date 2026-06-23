@@ -218,7 +218,7 @@ function PositionsSection() {
       <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-start' }}>
         {/* Mini table diagram */}
         <div style={{
-          position: 'relative', width: 360, height: 250, flexShrink: 0,
+          position: 'relative', width: 'min(360px, 100%)', height: 250, flexShrink: 0,
           margin: '10px 0',
         }}>
           <div style={{
@@ -301,7 +301,7 @@ function RangesSection({ pos, setPos }: { pos: Position; setPos: (p: Position) =
           </button>
         ))}
       </div>
-      <RangeGrid position={pos} cellSize={34} />
+      <div style={{ overflowX: 'auto' }}><RangeGrid position={pos} cellSize={34} /></div>
       <p style={{ marginTop: 14, fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.7 }}>
         <BulbIcon size={14} style={{ verticalAlign: '-2px' }} /> 読み方の例: 「ATs」= AとT(10)のスーテッド。BTNからは緑(オープンOK)だが、UTGからはフォールド。<br />
         BBはすでに₱50を払っているため「オープン」の概念がなく、相手のレイズに対する守り(コール/3ベット)が中心になります。
@@ -472,7 +472,7 @@ function GlossarySection() {
           <div key={g.term} style={{
             background: 'var(--panel-bg)', borderRadius: 8, padding: '10px 16px',
             border: '1px solid var(--panel-border)',
-            display: 'flex', gap: 14, alignItems: 'baseline',
+            display: 'flex', flexWrap: 'wrap', gap: 14, alignItems: 'baseline',
           }}>
             <div style={{ width: 170, flexShrink: 0 }}>
               <span style={{ color: 'var(--gold-light)', fontWeight: 700, fontSize: 14 }}>{g.term}</span>

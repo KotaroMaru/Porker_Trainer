@@ -151,6 +151,7 @@ function ActionBtn({ label, color, onClick }: { label: string; color: string; on
         background: color, color: 'var(--text)',
         padding: '11px 14px', fontSize: 15, borderRadius: 8,
         fontWeight: 700, flex: 1, boxShadow: 'var(--shadow-sm)',
+        minHeight: 44,
       }}
     >
       {label}
@@ -167,6 +168,7 @@ function StepBtn({ label, onClick, disabled }: { label: string; onClick: () => v
         background: 'var(--panel-bg-light)', color: 'var(--gold-light)',
         border: '1px solid var(--panel-border)',
         width: 58, padding: '12px 0', fontSize: 14, fontWeight: 700, borderRadius: 8,
+        minHeight: 44,
       }}
     >
       {label}

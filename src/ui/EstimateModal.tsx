@@ -25,7 +25,8 @@ export function EstimateModal() {
             transition={{ type: 'spring', stiffness: 380, damping: 28 }}
             style={{
               background: 'var(--panel-bg)', borderRadius: 14, padding: 28,
-              border: '1px solid var(--panel-border)', minWidth: 360, maxWidth: 440,
+              border: '1px solid var(--panel-border)',
+              width: 'min(440px, calc(100vw - 24px))',
               boxShadow: 'var(--shadow-lg)',
             }}
           >

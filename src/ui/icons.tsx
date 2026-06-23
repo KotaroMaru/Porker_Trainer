@@ -181,3 +181,37 @@ export function FishIcon(p: IconProps) {
     </Svg>
   )
 }
+
+export function ListIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01" />
+    </Svg>
+  )
+}
+
+export function BarChartIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M18 20V10M12 20V4M6 20v-6" />
+    </Svg>
+  )
+}
+
+export function BookIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </Svg>
+  )
+}
+
+export function HelpCircleIcon(p: IconProps) {
+  return (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3M12 17h.01" />
+    </Svg>
+  )
+}

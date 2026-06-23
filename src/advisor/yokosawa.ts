@@ -1,6 +1,6 @@
 import type { Position, GameState, Player } from '../engine/types'
 import { handString } from './ranges'
-import { playersBehind as _playersBehind, actionOrder } from '../engine/positions'
+import { playersBehind as _playersBehind } from '../engine/positions'
 
 // ============================================================
 // 世界のヨコサワ「オリジナルハンドレンジ」モデル

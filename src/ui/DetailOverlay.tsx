@@ -24,7 +24,7 @@ export function DetailOverlay({ open, title, onClose, children, maxWidth = 560 }
             position: 'fixed', inset: 0, zIndex: 200,
             background: 'rgba(0,0,0,0.6)',
             display: 'flex', alignItems: 'center', justifyContent: 'center',
-            padding: 24,
+            padding: 'max(12px, env(safe-area-inset-top)) 12px 12px',
           }}
         >
           <motion.div
@@ -38,8 +38,8 @@ export function DetailOverlay({ open, title, onClose, children, maxWidth = 560 }
               border: '1px solid var(--panel-border)',
               borderRadius: 14,
               boxShadow: 'var(--shadow-lg)',
-              width: '100%', maxWidth,
-              maxHeight: '85vh',
+              width: `min(${maxWidth}px, calc(100vw - 24px))`,
+              maxHeight: '85dvh',
               display: 'flex', flexDirection: 'column',
               overflow: 'hidden',
             }}

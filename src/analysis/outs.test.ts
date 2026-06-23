@@ -82,7 +82,7 @@ describe('drawOutCards - ストレートドロー(ガットショット)', () =>
     const { straight } = drawOutCards(hole, board)
     const ranks = new Set(straight.map(card => card.rank))
     // A(14)と6の両端が出るはず(rank 1 という実在しないランクは含まれない)
-    expect(ranks.has(1)).toBe(false)
+    expect(ranks.has(1 as Card['rank'])).toBe(false)
     expect(ranks.has(14)).toBe(true)
     expect(ranks.has(6)).toBe(true)
   })

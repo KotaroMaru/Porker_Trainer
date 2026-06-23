@@ -1,6 +1,6 @@
 import { createDeck, shuffle, deal } from './deck'
 import { evaluate } from './evaluator'
-import type { GameState, Player, Action, ActionType, Position, Pot } from './types'
+import type { GameState, Player, Action, ActionType, Pot } from './types'
 import { positionsByOffset } from './positions'
 const SMALL_BLIND = 25
 const BIG_BLIND = 50
