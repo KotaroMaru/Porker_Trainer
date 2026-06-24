@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { useAppStore } from '../store/state'
 import { getLegalActions } from '../engine/game'
+import { useIsMobile } from '../hooks/useIsMobile'
 import type { ActionType } from '../engine/types'
 
 const STEP = 50      // BB unit stepper increment
@@ -13,6 +14,7 @@ function roundTo(v: number, unit: number): number {
 
 export function ActionBar() {
   const { game, submitAction } = useAppStore()
+  const isMobile = useIsMobile()
   const [betSize, setBetSize] = useState(100)
 
   useEffect(() => {
@@ -54,8 +56,13 @@ export function ActionBar() {
     submitAction({ type, amount, playerId: user.id })
   }
 
+  const outerPad = isMobile ? 10 : 14
+  const sizingPad = isMobile ? 8 : 10
+  const outerGap = isMobile ? 7 : 10
+  const amountFontSize = isMobile ? 18 : 21
+
   return (
-    <div style={{ padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div style={{ padding: outerPad, display: 'flex', flexDirection: 'column', gap: outerGap }}>
       {/* Main action buttons */}
       <div style={{ display: 'flex', gap: 8 }}>
         {legalTypes.has('fold') && (
@@ -72,8 +79,8 @@ export function ActionBar() {
       {/* Bet/raise sizing */}
       {betAction && (
         <div style={{
-          background: 'rgba(0,0,0,0.25)', borderRadius: 10, padding: 10,
-          display: 'flex', flexDirection: 'column', gap: 8,
+          background: 'rgba(0,0,0,0.25)', borderRadius: 10, padding: sizingPad,
+          display: 'flex', flexDirection: 'column', gap: isMobile ? 6 : 8,
           border: '1px solid var(--panel-border)',
         }}>
           {/* Presets */}
@@ -90,7 +97,9 @@ export function ActionBar() {
                     background: selected ? 'var(--gold)' : 'var(--panel-bg)',
                     color: selected ? '#1a2a1a' : 'var(--text-muted)',
                     border: `1px solid ${selected ? 'var(--gold)' : 'var(--panel-border)'}`,
-                    padding: '6px 4px', fontSize: 12.5, borderRadius: 6,
+                    padding: isMobile ? '5px 2px' : '6px 4px',
+                    fontSize: isMobile ? 12 : 12.5,
+                    borderRadius: 6,
                     fontWeight: selected ? 700 : 500,
                   }}
                 >
@@ -105,13 +114,14 @@ export function ActionBar() {
             <StepBtn label={`−${STEP}`} onClick={() => setBetSize(v => clamp(roundTo(v - STEP, ROUND)))} disabled={betSize <= minBet} />
             <div style={{
               flex: 1, textAlign: 'center',
-              background: 'rgba(0,0,0,0.35)', borderRadius: 8, padding: '7px 4px',
+              background: 'rgba(0,0,0,0.35)', borderRadius: 8,
+              padding: isMobile ? '5px 4px' : '7px 4px',
             }}>
-              <div style={{ fontSize: 21, fontWeight: 700, color: 'var(--gold-light)', lineHeight: 1.1 }}>
+              <div style={{ fontSize: amountFontSize, fontWeight: 700, color: 'var(--gold-light)', lineHeight: 1.1 }}>
                 ₱{betSize}
               </div>
-              <div style={{ fontSize: 10.5, color: 'var(--text-dim)', marginTop: 2 }}>
-                最小 ₱{minBet} / 最大 ₱{maxBet}
+              <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 1 }}>
+                最小₱{minBet} / 最大₱{maxBet}
               </div>
             </div>
             <StepBtn label={`+${STEP}`} onClick={() => setBetSize(v => clamp(roundTo(v + STEP, ROUND)))} disabled={betSize >= maxBet} />
@@ -125,8 +135,11 @@ export function ActionBar() {
             style={{
               background: 'linear-gradient(180deg, var(--gold-light), var(--gold))',
               color: '#1a2a1a',
-              padding: '11px 14px', fontSize: 16, borderRadius: 8,
+              padding: isMobile ? '9px 14px' : '11px 14px',
+              fontSize: isMobile ? 15 : 16,
+              borderRadius: 8,
               fontWeight: 700, boxShadow: 'var(--shadow-sm)',
+              minHeight: 44,
             }}
           >
             {betAction.type === 'raise' ? `レイズ ₱${betSize}` : `ベット ₱${betSize}`}

@@ -79,7 +79,11 @@ function SeatView({ player, isCurrentActor, showTypes, revealCards, showdown, pl
   player: Player; isCurrentActor: boolean; showTypes: boolean; revealCards: boolean
   showdown?: ShowdownHand; playerCount: number; compact?: boolean
 }) {
-  const pos = getSeatPos(player.seatIndex, playerCount)
+  const rawPos = getSeatPos(player.seatIndex, playerCount)
+  // On mobile (compact), compress x coords inward so seat labels don't clip off screen edges
+  const pos = compact
+    ? { x: 50 + (rawPos.x - 50) * 0.82, y: rawPos.y }
+    : rawPos
   const isFolded = player.folded
   const posInfo = POSITION_INFO[player.position]
 
@@ -311,168 +315,167 @@ export function TableView() {
   // ---- Mobile layout ----
   if (isMobile) {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-        {/* Table area with fixed aspect ratio */}
-        <div style={{ position: 'relative', width: '100%', paddingTop: '80%', flexShrink: 0 }}>
-          <div style={{ position: 'absolute', inset: 0 }}>
-            {/* Felt ellipse */}
-            <div style={{
-              position: 'absolute',
-              left: '4%', right: '4%', top: '5%', bottom: '8%',
-              background: 'radial-gradient(ellipse at 50% 40%, #358a5c 0%, var(--green-felt) 55%, #226342 100%)',
-              borderRadius: '50%',
-              border: '6px solid #14301f',
-              boxShadow: 'inset 0 6px 28px rgba(0,0,0,0.45), var(--shadow-md)',
-            }} />
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+        {/* Table area: fills all remaining height, no fixed aspect ratio */}
+        <div style={{ flex: 1, position: 'relative', minHeight: 280 }}>
+          {/* Felt ellipse — wider horizontal margins for more room */}
+          <div style={{
+            position: 'absolute',
+            left: '2%', right: '2%', top: '3%', bottom: '5%',
+            background: 'radial-gradient(ellipse at 50% 40%, #358a5c 0%, var(--green-felt) 55%, #226342 100%)',
+            borderRadius: '50%',
+            border: '6px solid #14301f',
+            boxShadow: 'inset 0 6px 28px rgba(0,0,0,0.45), var(--shadow-md)',
+          }} />
 
-            {/* Pot + street */}
-            <div style={{
-              position: 'absolute', left: '50%', top: '31%',
-              transform: 'translate(-50%, -50%)',
-              textAlign: 'center', zIndex: 2,
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
-            }}>
-              <AnimatePresence mode="popLayout">
-                {potTotal > 0 && (
-                  <motion.div
-                    key={potTotal}
-                    initial={{ scale: 0.85, opacity: 0.6 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    transition={{ type: 'spring', stiffness: 300, damping: 18 }}
-                    style={{
-                      background: 'rgba(0,0,0,0.55)', borderRadius: 8, padding: '3px 12px',
-                      fontSize: 14, fontWeight: 700, color: 'var(--gold)',
-                    }}
-                  >
-                    ポット ₱{potTotal}
-                  </motion.div>
-                )}
-              </AnimatePresence>
-              <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>
-                {STREET_JA[game.street] ?? game.street}
-                <span style={{ marginLeft: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
-                  #{game.handNumber}
-                </span>
-              </div>
-            </div>
-
-            {/* Board cards */}
-            <div style={{
-              position: 'absolute', left: '50%', top: '50%',
-              transform: 'translate(-50%, -50%)',
-              display: 'flex', gap: 4, zIndex: 2, perspective: 600,
-            }}>
-              {game.board.map((c, i) => (
+          {/* Pot + street — lowered to 38% to avoid overlapping top seats */}
+          <div style={{
+            position: 'absolute', left: '50%', top: '38%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center', zIndex: 2,
+            display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+          }}>
+            <AnimatePresence mode="popLayout">
+              {potTotal > 0 && (
                 <motion.div
-                  key={`${c.rank}${c.suit}`}
-                  initial={{ rotateY: 90, opacity: 0 }}
-                  animate={{ rotateY: 0, opacity: 1 }}
-                  transition={{ duration: 0.35, delay: i >= 3 ? 0 : i * 0.12 }}
+                  key={potTotal}
+                  initial={{ scale: 0.85, opacity: 0.6 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  transition={{ type: 'spring', stiffness: 300, damping: 18 }}
+                  style={{
+                    background: 'rgba(0,0,0,0.55)', borderRadius: 8, padding: '3px 12px',
+                    fontSize: 14, fontWeight: 700, color: 'var(--gold)',
+                  }}
                 >
-                  <CardView
-                    card={c}
-                    size={boardCardSize}
-                    highlight={winnerBoardKeys.has(cardKey(c))}
-                    dimmed={winnerBoardKeys.size > 0 && !winnerBoardKeys.has(cardKey(c))}
-                  />
-                </motion.div>
-              ))}
-              {Array.from({ length: 5 - game.board.length }).map((_, i) => (
-                <div key={i} style={{ width: boardPlaceholderW, height: boardPlaceholderH, borderRadius: 5, border: '1.5px dashed rgba(255,255,255,0.18)' }} />
-              ))}
-            </div>
-
-            {/* Players */}
-            {game.players.map(p => (
-              <SeatView
-                key={p.id}
-                player={p}
-                playerCount={game.players.length}
-                isCurrentActor={!game.handOver && game.players[game.actionIndex]?.id === p.id}
-                showTypes={showBotTypes}
-                revealCards={revealCards}
-                showdown={showdownHands.get(p.id)}
-                compact
-              />
-            ))}
-
-            {/* Hand over popup */}
-            <AnimatePresence>
-              {showOverlay && (
-                <motion.div
-                  key="handover"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                  transition={{ delay: revealCards ? 1.2 : 0, duration: 0.18 }}
-                  style={{ position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none' }}
-                >
-                  <div style={{
-                    position: 'absolute', left: '50%', top: '60%',
-                    transform: 'translate(-50%, -100%)',
-                    pointerEvents: 'auto',
-                  }}>
-                    <motion.div
-                      initial={{ scale: 0.9, y: 8 }}
-                      animate={{ scale: 1, y: 0 }}
-                      transition={{ type: 'spring', stiffness: 320, damping: 24, delay: revealCards ? 1.2 : 0 }}
-                      style={{
-                        background: 'rgba(20,38,27,0.97)', borderRadius: 10,
-                        padding: '8px 18px', textAlign: 'center',
-                        border: '1px solid var(--gold)',
-                        boxShadow: 'var(--shadow-lg), var(--glow-gold)',
-                        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7,
-                      }}
-                    >
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                        {[...lastPayouts.entries()].map(([id, amount]) => {
-                          const p = game.players.find(pl => pl.id === id)
-                          const sd = showdownHands.get(id)
-                          return amount > 0 ? (
-                            <div key={id} style={{ color: 'var(--text)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
-                              <TrophyIcon size={13} style={{ color: 'var(--gold)' }} />
-                              {p?.name ?? id}
-                              <strong style={{ color: 'var(--gold-light)' }}>+₱{amount}</strong>
-                              {sd && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({sd.category})</span>}
-                            </div>
-                          ) : null
-                        })}
-                      </div>
-                      <motion.button
-                        whileHover={{ scale: 1.04 }}
-                        whileTap={{ scale: 0.96 }}
-                        onClick={nextHand}
-                        disabled={dismissed}
-                        style={{
-                          background: 'var(--green-mid)', color: 'var(--gold-light)',
-                          padding: '7px 20px', fontSize: 14, borderRadius: 8, fontWeight: 600,
-                          opacity: dismissed ? 0.6 : 1,
-                        }}
-                      >
-                        次のハンド →
-                      </motion.button>
-                    </motion.div>
-                  </div>
+                  ポット ₱{potTotal}
                 </motion.div>
               )}
             </AnimatePresence>
+            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)', fontWeight: 600 }}>
+              {STREET_JA[game.street] ?? game.street}
+              <span style={{ marginLeft: 8, fontSize: 10, color: 'rgba(255,255,255,0.4)' }}>
+                #{game.handNumber}
+              </span>
+            </div>
           </div>
+
+          {/* Board cards */}
+          <div style={{
+            position: 'absolute', left: '50%', top: '55%',
+            transform: 'translate(-50%, -50%)',
+            display: 'flex', gap: 4, zIndex: 2, perspective: 600,
+          }}>
+            {game.board.map((c, i) => (
+              <motion.div
+                key={`${c.rank}${c.suit}`}
+                initial={{ rotateY: 90, opacity: 0 }}
+                animate={{ rotateY: 0, opacity: 1 }}
+                transition={{ duration: 0.35, delay: i >= 3 ? 0 : i * 0.12 }}
+              >
+                <CardView
+                  card={c}
+                  size={boardCardSize}
+                  highlight={winnerBoardKeys.has(cardKey(c))}
+                  dimmed={winnerBoardKeys.size > 0 && !winnerBoardKeys.has(cardKey(c))}
+                />
+              </motion.div>
+            ))}
+            {Array.from({ length: 5 - game.board.length }).map((_, i) => (
+              <div key={i} style={{ width: boardPlaceholderW, height: boardPlaceholderH, borderRadius: 5, border: '1.5px dashed rgba(255,255,255,0.18)' }} />
+            ))}
+          </div>
+
+          {/* Players — x coords compressed via compact prop (see SeatView) */}
+          {game.players.map(p => (
+            <SeatView
+              key={p.id}
+              player={p}
+              playerCount={game.players.length}
+              isCurrentActor={!game.handOver && game.players[game.actionIndex]?.id === p.id}
+              showTypes={showBotTypes}
+              revealCards={revealCards}
+              showdown={showdownHands.get(p.id)}
+              compact
+            />
+          ))}
+
+          {/* Hand over popup */}
+          <AnimatePresence>
+            {showOverlay && (
+              <motion.div
+                key="handover"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ delay: revealCards ? 1.2 : 0, duration: 0.18 }}
+                style={{ position: 'absolute', inset: 0, zIndex: 20, pointerEvents: 'none' }}
+              >
+                <div style={{
+                  position: 'absolute', left: '50%', top: '60%',
+                  transform: 'translate(-50%, -100%)',
+                  pointerEvents: 'auto',
+                }}>
+                  <motion.div
+                    initial={{ scale: 0.9, y: 8 }}
+                    animate={{ scale: 1, y: 0 }}
+                    transition={{ type: 'spring', stiffness: 320, damping: 24, delay: revealCards ? 1.2 : 0 }}
+                    style={{
+                      background: 'rgba(20,38,27,0.97)', borderRadius: 10,
+                      padding: '8px 18px', textAlign: 'center',
+                      border: '1px solid var(--gold)',
+                      boxShadow: 'var(--shadow-lg), var(--glow-gold)',
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 7,
+                      maxWidth: 'calc(100vw - 32px)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      {[...lastPayouts.entries()].map(([id, amount]) => {
+                        const p = game.players.find(pl => pl.id === id)
+                        const sd = showdownHands.get(id)
+                        return amount > 0 ? (
+                          <div key={id} style={{ color: 'var(--text)', fontSize: 13, display: 'flex', alignItems: 'center', gap: 5, whiteSpace: 'nowrap' }}>
+                            <TrophyIcon size={13} style={{ color: 'var(--gold)' }} />
+                            {p?.name ?? id}
+                            <strong style={{ color: 'var(--gold-light)' }}>+₱{amount}</strong>
+                            {sd && <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>({sd.category})</span>}
+                          </div>
+                        ) : null
+                      })}
+                    </div>
+                    <motion.button
+                      whileHover={{ scale: 1.04 }}
+                      whileTap={{ scale: 0.96 }}
+                      onClick={nextHand}
+                      disabled={dismissed}
+                      style={{
+                        background: 'var(--green-mid)', color: 'var(--gold-light)',
+                        padding: '7px 20px', fontSize: 14, borderRadius: 8, fontWeight: 600,
+                        opacity: dismissed ? 0.6 : 1,
+                      }}
+                    >
+                      次のハンド →
+                    </motion.button>
+                  </motion.div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
-        {/* ActionBar (mobile inline) */}
+        {/* ActionBar (inline, shrinks table area above) */}
         {isUserTurn && userPlayer && (
           <div style={{ borderTop: '1px solid var(--panel-border)', flexShrink: 0 }}>
             <ActionBar />
           </div>
         )}
 
-        {/* Judge panel toggle */}
+        {/* Judge panel toggle button */}
         <button
           onClick={() => setSheetOpen(o => !o)}
           style={{
             width: '100%', padding: '8px 16px',
-            background: sheetOpen ? 'var(--green-mid)' : 'var(--panel-bg)',
-            color: sheetOpen ? 'var(--gold-light)' : 'var(--text-muted)',
+            background: 'var(--panel-bg)',
+            color: 'var(--text-muted)',
             borderTop: '1px solid var(--panel-border)',
             borderRadius: 0, fontSize: 13, fontWeight: 600,
             flexShrink: 0,
@@ -481,29 +484,74 @@ export function TableView() {
           判定パネル {sheetOpen ? '▼' : '▲'}
         </button>
 
-        {/* Bottom sheet: JudgePanel */}
+        {/* Modal sheet: scrim + slide-up panel */}
         <AnimatePresence>
           {sheetOpen && (
-            <motion.div
-              key="judge-sheet"
-              initial={{ y: '100%' }}
-              animate={{ y: 0 }}
-              exit={{ y: '100%' }}
-              transition={{ type: 'spring', stiffness: 340, damping: 32 }}
-              style={{
-                position: 'fixed',
-                bottom: 54, // above BottomNav
-                left: 0, right: 0,
-                maxHeight: '65dvh',
-                overflowY: 'auto',
-                background: 'var(--panel-bg)',
-                borderTop: '2px solid var(--panel-border)',
-                zIndex: 80,
-                paddingBottom: 'env(safe-area-inset-bottom)',
-              }}
-            >
-              <JudgePanel />
-            </motion.div>
+            <>
+              <motion.div
+                key="judge-scrim"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                onClick={() => setSheetOpen(false)}
+                style={{
+                  position: 'fixed', inset: 0,
+                  background: 'rgba(0,0,0,0.55)',
+                  zIndex: 79,
+                }}
+              />
+              <motion.div
+                key="judge-sheet"
+                initial={{ y: '100%' }}
+                animate={{ y: 0 }}
+                exit={{ y: '100%' }}
+                transition={{ type: 'spring', stiffness: 340, damping: 32 }}
+                style={{
+                  position: 'fixed',
+                  left: 0, right: 0, bottom: 0,
+                  maxHeight: '82dvh',
+                  display: 'flex', flexDirection: 'column',
+                  background: 'var(--panel-bg)',
+                  borderTop: '2px solid var(--panel-border)',
+                  borderTopLeftRadius: 16, borderTopRightRadius: 16,
+                  boxShadow: 'var(--shadow-lg)',
+                  zIndex: 80,
+                  paddingBottom: 'env(safe-area-inset-bottom)',
+                }}
+              >
+                {/* Grab handle + header row */}
+                <div style={{ flexShrink: 0 }}>
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: '8px 0 4px' }}>
+                    <div style={{ width: 40, height: 4, borderRadius: 2, background: 'var(--panel-border)' }} />
+                  </div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    padding: '4px 16px 10px',
+                    borderBottom: '1px solid var(--panel-border)',
+                  }}>
+                    <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>判定パネル</span>
+                    <button
+                      onClick={() => setSheetOpen(false)}
+                      style={{
+                        width: 28, height: 28, borderRadius: '50%',
+                        background: 'var(--panel-bg-light)',
+                        color: 'var(--text-muted)',
+                        fontSize: 14, fontWeight: 700,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        border: '1px solid var(--panel-border)',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+                {/* Scrollable content */}
+                <div style={{ overflowY: 'auto', flex: 1 }}>
+                  <JudgePanel />
+                </div>
+              </motion.div>
+            </>
           )}
         </AnimatePresence>
 
