@@ -50,8 +50,42 @@ const SEAT_COORDS: Record<number, { x: number; y: number }[]> = {
   ],
 }
 
-function getSeatPos(seatIndex: number, playerCount: number): { x: number; y: number } {
-  const coords = SEAT_COORDS[playerCount] ?? SEAT_COORDS[6]
+// Mobile-specific coords: seats sit in upper (y≤30%) or lower (y≥70%) bands,
+// keeping the centre band (y≈42–66%) clear for board cards.
+const SEAT_COORDS_MOBILE: Record<number, { x: number; y: number }[]> = {
+  6: [
+    { x: 50, y: 90 },
+    { x: 15, y: 75 },
+    { x: 13, y: 28 },
+    { x: 50, y: 14 },
+    { x: 87, y: 28 },
+    { x: 85, y: 75 },
+  ],
+  7: [
+    { x: 50, y: 90 },
+    { x: 12, y: 74 },
+    { x: 9,  y: 36 },
+    { x: 26, y: 14 },
+    { x: 74, y: 14 },
+    { x: 91, y: 36 },
+    { x: 88, y: 74 },
+  ],
+  8: [
+    { x: 50, y: 90 },
+    { x: 14, y: 74 },
+    { x: 9,  y: 38 },
+    { x: 15, y: 18 },
+    { x: 50, y: 12 },
+    { x: 85, y: 18 },
+    { x: 91, y: 38 },
+    { x: 86, y: 74 },
+  ],
+}
+
+function getSeatPos(seatIndex: number, playerCount: number, mobile?: boolean): { x: number; y: number } {
+  const coords = mobile
+    ? (SEAT_COORDS_MOBILE[playerCount] ?? SEAT_COORDS_MOBILE[6])
+    : (SEAT_COORDS[playerCount] ?? SEAT_COORDS[6])
   return coords[seatIndex % coords.length]
 }
 
@@ -79,11 +113,7 @@ function SeatView({ player, isCurrentActor, showTypes, revealCards, showdown, pl
   player: Player; isCurrentActor: boolean; showTypes: boolean; revealCards: boolean
   showdown?: ShowdownHand; playerCount: number; compact?: boolean
 }) {
-  const rawPos = getSeatPos(player.seatIndex, playerCount)
-  // On mobile (compact), compress x coords inward so seat labels don't clip off screen edges
-  const pos = compact
-    ? { x: 50 + (rawPos.x - 50) * 0.82, y: rawPos.y }
-    : rawPos
+  const pos = getSeatPos(player.seatIndex, playerCount, compact)
   const isFolded = player.folded
   const posInfo = POSITION_INFO[player.position]
 
@@ -199,33 +229,51 @@ function SeatView({ player, isCurrentActor, showTypes, revealCards, showdown, pl
         )}
       </div>
 
+      {!compact && (
+        <div
+          className={isCurrentActor ? 'actor-pulse' : undefined}
+          style={{
+            background: isCurrentActor ? 'var(--gold)' : 'var(--panel-bg)',
+            color: isCurrentActor ? '#1a2a1a' : 'var(--text)',
+            border: `1px solid ${isCurrentActor ? 'var(--gold)' : 'var(--panel-border)'}`,
+            borderRadius: 8, padding: namePadding, fontSize: nameFontSize, whiteSpace: 'nowrap',
+            fontWeight: isCurrentActor ? 700 : 500,
+            transition: 'background 0.25s, color 0.25s',
+          }}
+        >
+          {player.name}
+          {showTypes && !player.isUser && (
+            <span style={{ color: isCurrentActor ? '#3a4a3a' : 'var(--text-dim)', marginLeft: 4, fontSize: 12.5 }}>
+              ({TYPE_LABELS[player.type] ?? player.type})
+            </span>
+          )}
+        </div>
+      )}
+
       <div
-        className={isCurrentActor ? 'actor-pulse' : undefined}
+        className={compact && isCurrentActor ? 'actor-pulse' : undefined}
         style={{
-          background: isCurrentActor ? 'var(--gold)' : 'var(--panel-bg)',
-          color: isCurrentActor ? '#1a2a1a' : 'var(--text)',
-          border: `1px solid ${isCurrentActor ? 'var(--gold)' : 'var(--panel-border)'}`,
-          borderRadius: 8, padding: namePadding, fontSize: nameFontSize, whiteSpace: 'nowrap',
-          fontWeight: isCurrentActor ? 700 : 500,
-          transition: 'background 0.25s, color 0.25s',
+          display: 'flex', alignItems: 'center', gap: compact ? 4 : 7,
+          ...(compact && isCurrentActor ? {
+            background: 'var(--gold)', borderRadius: 6, padding: '2px 6px',
+          } : {}),
+          transition: 'background 0.25s',
         }}
       >
-        {player.name}
-        {showTypes && !player.isUser && (
-          <span style={{ color: isCurrentActor ? '#3a4a3a' : 'var(--text-dim)', marginLeft: 4, fontSize: compact ? 10 : 12.5 }}>
-            ({TYPE_LABELS[player.type] ?? player.type})
-          </span>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', alignItems: 'center', gap: compact ? 4 : 7 }}>
-        <span style={{ fontSize: stackFontSize, color: 'var(--text-muted)', fontWeight: 600 }}>
+        <span style={{
+          fontSize: stackFontSize,
+          color: compact && isCurrentActor ? '#1a2a1a' : 'var(--text-muted)',
+          fontWeight: 600,
+        }}>
           ₱{player.stack}
         </span>
         <div className="tooltip-host" style={{ cursor: 'help' }}>
           <span style={{
-            fontSize: compact ? 10 : 12, color: 'var(--gold-light)', fontWeight: 700,
-            background: 'rgba(200,168,75,0.15)', borderRadius: 4, padding: compact ? '1px 5px' : '1px 8px',
+            fontSize: compact ? 10 : 12,
+            color: compact && isCurrentActor ? '#1a2a1a' : 'var(--gold-light)',
+            fontWeight: 700,
+            background: compact && isCurrentActor ? 'transparent' : 'rgba(200,168,75,0.15)',
+            borderRadius: 4, padding: compact ? '1px 5px' : '1px 8px',
           }}>
             {player.position}
           </span>
@@ -308,9 +356,9 @@ export function TableView() {
 
   const showOverlay = game.handOver && !dismissed
 
-  const boardCardSize = isMobile ? 'md' : 'xl'
-  const boardPlaceholderW = isMobile ? 48 : 72
-  const boardPlaceholderH = isMobile ? 67 : 100
+  const boardCardSize = isMobile ? 'sm' : 'xl'
+  const boardPlaceholderW = isMobile ? 36 : 72
+  const boardPlaceholderH = isMobile ? 50 : 100
 
   // ---- Mobile layout ----
   if (isMobile) {
@@ -328,9 +376,9 @@ export function TableView() {
             boxShadow: 'inset 0 6px 28px rgba(0,0,0,0.45), var(--shadow-md)',
           }} />
 
-          {/* Pot + street — lowered to 38% to avoid overlapping top seats */}
+          {/* Pot + street */}
           <div style={{
-            position: 'absolute', left: '50%', top: '38%',
+            position: 'absolute', left: '50%', top: '30%',
             transform: 'translate(-50%, -50%)',
             textAlign: 'center', zIndex: 2,
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
@@ -361,7 +409,7 @@ export function TableView() {
 
           {/* Board cards */}
           <div style={{
-            position: 'absolute', left: '50%', top: '55%',
+            position: 'absolute', left: '50%', top: '50%',
             transform: 'translate(-50%, -50%)',
             display: 'flex', gap: 4, zIndex: 2, perspective: 600,
           }}>
