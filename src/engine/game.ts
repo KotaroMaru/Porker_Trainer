@@ -251,7 +251,7 @@ function nextActionIndex(players: Player[], currentIndex: number, currentBet: nu
 
 export function isBettingClosed(state: GameState): boolean {
   const active = state.players.filter(p => !p.folded && !p.allin)
-  if (active.length <= 1) return true
+  if (active.length === 0) return true
   const allMatched = active.every(p => p.bet === state.currentBet)
   const allActed = active.every(p => p.hasActed)
   return allMatched && allActed

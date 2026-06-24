@@ -54,7 +54,7 @@ const SEAT_COORDS: Record<number, { x: number; y: number }[]> = {
 // keeping the centre band (y≈42–66%) clear for board cards.
 const SEAT_COORDS_MOBILE: Record<number, { x: number; y: number }[]> = {
   6: [
-    { x: 50, y: 90 },
+    { x: 50, y: 84 },
     { x: 15, y: 75 },
     { x: 13, y: 28 },
     { x: 50, y: 14 },
@@ -62,7 +62,7 @@ const SEAT_COORDS_MOBILE: Record<number, { x: number; y: number }[]> = {
     { x: 85, y: 75 },
   ],
   7: [
-    { x: 50, y: 90 },
+    { x: 50, y: 84 },
     { x: 12, y: 74 },
     { x: 9,  y: 36 },
     { x: 26, y: 14 },
@@ -71,7 +71,7 @@ const SEAT_COORDS_MOBILE: Record<number, { x: number; y: number }[]> = {
     { x: 88, y: 74 },
   ],
   8: [
-    { x: 50, y: 90 },
+    { x: 50, y: 84 },
     { x: 14, y: 74 },
     { x: 9,  y: 38 },
     { x: 15, y: 18 },
@@ -378,7 +378,7 @@ export function TableView() {
 
           {/* Pot + street */}
           <div style={{
-            position: 'absolute', left: '50%', top: '30%',
+            position: 'absolute', left: '50%', top: '34%',
             transform: 'translate(-50%, -50%)',
             textAlign: 'center', zIndex: 2,
             display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
