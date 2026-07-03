@@ -6,7 +6,7 @@ import { YokosawaRangeGrid } from './YokosawaRangeGrid'
 import { CardView } from './CardView'
 import { POSITION_INFO, GLOSSARY } from './glossary'
 import { BulbIcon, BrickIcon, RockIcon, FireIcon, CapIcon, FishIcon, WarningIcon } from './icons'
-import { TIER_INFO, TIER_ORDER } from '../advisor/yokosawa'
+import { TIER_INFO, TIER_DISPLAY_ORDER } from '../advisor/yokosawa'
 import type { Position, Card, Rank, Suit } from '../engine/types'
 
 const POSITIONS: Position[] = ['UTG', 'HJ', 'CO', 'BTN', 'SB']
@@ -494,7 +494,7 @@ function YokosawaRangeSection() {
     <section>
       <SectionTitle>ヨコサワレンジ表</SectionTitle>
       <Intro>
-        「世界のヨコサワ」オリジナルのハンドレンジ表です。手の強さを<strong>7色のティア（段階）</strong>で表し、
+        「世界のヨコサワ」オリジナルのハンドレンジ表です。手の強さを<strong>8色のティア（段階）</strong>で表し、
         ポジション（後ろの人数）に応じて参加・フォールドを判断します。
         まずこの表で自分の手が何色かを確認しましょう。
       </Intro>
@@ -504,7 +504,7 @@ function YokosawaRangeSection() {
       <div style={{ marginTop: 20, display: 'flex', flexDirection: 'column', gap: 10 }}>
         <SectionTitle>各ティアの意味</SectionTitle>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 10 }}>
-          {TIER_ORDER.map(t => {
+          {TIER_DISPLAY_ORDER.map(t => {
             const info = TIER_INFO[t]
             const behindLabel =
               t === 'navy' ? '常に参加(8人/強)' :
@@ -513,6 +513,7 @@ function YokosawaRangeSection() {
               t === 'green' ? '後ろ4〜5人以下で参加' :
               t === 'lightblue' ? '後ろ3人以下で参加' :
               t === 'white' ? '後ろ2人以下で参加' :
+              t === 'pink' ? '境界：BTNのレイズにBBだけコール可' :
               '参加しない（フォールド）'
             return (
               <div key={t} style={{

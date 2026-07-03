@@ -6,7 +6,7 @@ import { RangeSetGrid } from './RangeSetGrid'
 import { MiniTableDiagram } from './MiniTableDiagram'
 import { POSITION_INFO } from './glossary'
 import { CheckIcon, CrossIcon } from './icons'
-import { TIER_INFO, TIER_ORDER, YOKOSAWA_ACTION_JA } from '../advisor/yokosawa'
+import { TIER_INFO, TIER_DISPLAY_ORDER, YOKOSAWA_ACTION_JA } from '../advisor/yokosawa'
 import type { YokosawaTier, YokosawaAction } from '../advisor/yokosawa'
 import {
   makePreflopQuestion, makeTierQuestion, makeReraiseQuestion, makeRangePredictionQuestion,
@@ -412,6 +412,7 @@ function TierQuiz({ reviewMode, wrongList, onWrong, onCorrect }: TierQuizProps) 
   const [answered, setAnswered] = useState<YokosawaTier | null>(null)
   const [score, setScore] = useState({ correct: 0, total: 0, streak: 0 })
   const [reviewDone, setReviewDone] = useState(false)
+  const [showGrid, setShowGrid] = useState(false)
 
   useEffect(() => {
     const nextQ = reviewMode && wrongList.length > 0
@@ -420,6 +421,7 @@ function TierQuiz({ reviewMode, wrongList, onWrong, onCorrect }: TierQuizProps) 
     setQ(nextQ)
     setAnswered(null)
     setReviewDone(false)
+    setShowGrid(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reviewMode])
 
@@ -445,6 +447,7 @@ function TierQuiz({ reviewMode, wrongList, onWrong, onCorrect }: TierQuizProps) 
       setQ(makeTierQuestion())
     }
     setAnswered(null)
+    setShowGrid(false)
   }
 
   return (
@@ -454,9 +457,9 @@ function TierQuiz({ reviewMode, wrongList, onWrong, onCorrect }: TierQuizProps) 
         <HandCards hand={q.hand} />
         <div style={{ color: 'var(--text-muted)', fontSize: 14 }}>この手はヨコサワモデルで何色？</div>
 
-        {/* 7 色の選択肢 */}
+        {/* 8 色の選択肢 (7ティア + ピンク) */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center', maxWidth: 560 }}>
-          {TIER_ORDER.map(t => {
+          {TIER_DISPLAY_ORDER.map(t => {
             const info = TIER_INFO[t]
             const isCorrect = answered && t === q.correct
             const isWrongPick = answered === t && t !== q.correct
@@ -484,11 +487,25 @@ function TierQuiz({ reviewMode, wrongList, onWrong, onCorrect }: TierQuizProps) 
         {answered && (
           <motion.div
             initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}
-            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, width: '100%' }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}
           >
             <ResultBanner correct={answered === q.correct} correctLabel={TIER_INFO[q.correct].labelJa} />
-            <YokosawaRangeGrid highlightHand={q.hand.handStr} cellSize={26} />
             <NextButton onClick={next} />
+            <button
+              onClick={() => setShowGrid(g => !g)}
+              style={{
+                background: 'transparent', color: 'var(--text-muted)',
+                border: '1px solid var(--panel-border)', borderRadius: 8,
+                padding: '6px 14px', fontSize: 12.5, fontWeight: 500,
+              }}
+            >
+              レンジ表を見る {showGrid ? '▲' : '▼'}
+            </button>
+            {showGrid && (
+              <div style={{ maxWidth: '100%', overflowX: 'auto' }}>
+                <YokosawaRangeGrid highlightHand={q.hand.handStr} cellSize={22} />
+              </div>
+            )}
           </motion.div>
         )}
       </div>

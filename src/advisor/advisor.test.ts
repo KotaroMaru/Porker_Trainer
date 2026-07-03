@@ -516,9 +516,9 @@ describe('getYokosawaTier', () => {
   it('KQs → red', () => {
     expect(getYokosawaTier('KQs')).toBe('red')
   })
-  it('boundary hands (gray fill + pink frame) → gray', () => {
+  it('boundary hands → pink (display tier, judged as gray in advice logic)', () => {
     for (const h of BB_BOUNDARY_HANDS) {
-      expect(getYokosawaTier(h)).toBe('gray')
+      expect(getYokosawaTier(h)).toBe('pink')
     }
   })
   it('all 169 hands have a tier assigned', () => {

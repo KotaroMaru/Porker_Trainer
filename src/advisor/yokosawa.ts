@@ -8,7 +8,7 @@ import { playersBehind as _playersBehind } from '../engine/positions'
 // リレイズ判断・BB ディフェンスを色から導く。
 // ============================================================
 
-export type YokosawaTier = 'navy' | 'red' | 'yellow' | 'green' | 'lightblue' | 'white' | 'gray'
+export type YokosawaTier = 'navy' | 'red' | 'yellow' | 'green' | 'lightblue' | 'white' | 'pink' | 'gray'
 
 export interface TierInfo {
   rank: number        // 1 = 最強
@@ -19,26 +19,34 @@ export interface TierInfo {
 }
 
 // 強い順。maxBehind は「後ろの人数 <= maxBehind なら参加圏内」。
+// pink は白と灰の境界(BB_BOUNDARY_HANDS)専用の表示ティア。
+// rank/maxBehind は gray と同値にし、アドバイス判定ロジック(TIER_ORDER基準)への
+// 影響をゼロに保つ(判定は TIER_ORDER の 7 色のみで行う)。
 export const TIER_INFO: Record<YokosawaTier, TierInfo> = {
-  navy:      { rank: 1, labelJa: '紺',   color: '#2e4cae', textColor: '#ffffff', maxBehind: 8 },
-  red:       { rank: 2, labelJa: '赤',   color: '#c0392b', textColor: '#ffffff', maxBehind: 8 },
-  yellow:    { rank: 3, labelJa: '黄',   color: '#d4ac0d', textColor: '#1a1a1a', maxBehind: 7 },
-  green:     { rank: 4, labelJa: '緑',   color: '#3a9960', textColor: '#ffffff', maxBehind: 5 },
-  lightblue: { rank: 5, labelJa: '水色', color: '#5dade2', textColor: '#10202a', maxBehind: 3 },
-  white:     { rank: 6, labelJa: '白',   color: '#e8e8e0', textColor: '#1a1a1a', maxBehind: 2 },
-  gray:      { rank: 7, labelJa: '灰',   color: '#5d6b62', textColor: '#cdd6cf', maxBehind: -1 },
+  navy:      { rank: 1, labelJa: '紺',     color: '#2e4cae', textColor: '#ffffff', maxBehind: 8 },
+  red:       { rank: 2, labelJa: '赤',     color: '#c0392b', textColor: '#ffffff', maxBehind: 8 },
+  yellow:    { rank: 3, labelJa: '黄',     color: '#d4ac0d', textColor: '#1a1a1a', maxBehind: 7 },
+  green:     { rank: 4, labelJa: '緑',     color: '#3a9960', textColor: '#ffffff', maxBehind: 5 },
+  lightblue: { rank: 5, labelJa: '水色',   color: '#5dade2', textColor: '#10202a', maxBehind: 3 },
+  white:     { rank: 6, labelJa: '白',     color: '#e8e8e0', textColor: '#1a1a1a', maxBehind: 2 },
+  pink:      { rank: 7, labelJa: 'ピンク', color: '#e84393', textColor: '#ffffff', maxBehind: -1 },
+  gray:      { rank: 7, labelJa: '灰',     color: '#5d6b62', textColor: '#cdd6cf', maxBehind: -1 },
 }
 
-// 強→弱の並び
+// 強→弱の並び(アドバイス判定ロジック専用。pink は含めない — climb/weakestOpenTier の
+// インデックス計算に影響させないため)。
 export const TIER_ORDER: YokosawaTier[] = ['navy', 'red', 'yellow', 'green', 'lightblue', 'white', 'gray']
 
-// 灰と白の境目(ピンク枠の灰)の 13 ハンド。BTN レイズに対し BB がコール可能になる特別枠。
+// 表示専用の並び(レンジ表凡例・色当てクイズの選択肢用)。pink を白と灰の間に挿入。
+export const TIER_DISPLAY_ORDER: YokosawaTier[] = ['navy', 'red', 'yellow', 'green', 'lightblue', 'white', 'pink', 'gray']
+
+// 灰と白の境目(ピンク)の 13 ハンド。BTN レイズに対し BB がコール可能になる特別枠。
 export const BB_BOUNDARY_HANDS = new Set<string>([
   'A6o', '98o', '54s', '64s', '75s', '86s', '96s', 'T7s', 'J6s', 'Q5s', 'Q4s', 'Q3s', 'Q2s',
 ])
 
 // 画像を 1 セルずつ照合した非灰ティアの割り当て。
-// ここに無い手はすべて灰(gray)。境界 13 ハンドも灰(別途ピンク枠)。
+// ここに無い手はすべて灰(gray)。境界 13 ハンドは後段で pink に上書き。
 const NONGRAY_TIERS: Partial<Record<YokosawaTier, string[]>> = {
   navy: ['AA', 'AKs', 'AKo', 'KK', 'QQ'],
   red: ['AQs', 'AJs', 'ATs', 'KQs', 'AQo', 'JJ', 'TT', '99'],
@@ -74,6 +82,9 @@ function buildTierMap(): Record<string, YokosawaTier> {
     if (!hands) continue
     for (const h of hands) map[h] = tier
   }
+  // 境界13ハンドは表示専用ティア pink に上書き(判定ロジックは BB_BOUNDARY_HANDS.has() を
+  // 直接参照するため、ここでの上書きは判定結果に影響しない)。
+  for (const h of BB_BOUNDARY_HANDS) map[h] = 'pink'
   return map
 }
 
@@ -154,7 +165,7 @@ function bbDefenseAdvice(p: YokosawaAdviceParams, tier: YokosawaTier): YokosawaA
   const isBoundary = rp === 'BTN' && BB_BOUNDARY_HANDS.has(p.handStr)
   if (rp === 'BTN') {
     threshold = TIER_INFO.white.rank
-    thresholdLabel = '白＋境界(ピンク枠)'
+    thresholdLabel = '白＋ピンク'
   }
   const callable = rank <= threshold || isBoundary
   // 紺・赤はいかなる状況でもフォールドしない
@@ -162,7 +173,7 @@ function bbDefenseAdvice(p: YokosawaAdviceParams, tier: YokosawaTier): YokosawaA
 
   if (callable || isPremium) {
     const premiumNote = isPremium ? '(紺/赤はフォールドしない → コール、または 3bet も有力)' : ''
-    const boundaryNote = isBoundary ? '境界(ピンク枠)ハンドはBTNレイズ限定でコール可。' : ''
+    const boundaryNote = isBoundary ? 'ピンクハンドはBTNレイズ限定でコール可。' : ''
     return {
       action: 'call',
       tier,
@@ -205,8 +216,8 @@ export function getYokosawaAdvice(p: YokosawaAdviceParams): YokosawaAdvice {
     return {
       action: 'fold',
       tier,
-      reasoning: tier === 'gray'
-        ? `灰色はフォールド（参加不可）。`
+      reasoning: tier === 'gray' || tier === 'pink'
+        ? `${tierJa(tier)}はフォールド（参加不可）。`
         : `${tierJa(tier)}（後ろ${maxBehind}人以下で参加）は${p.position}（後ろ${behind}人）では参加圏外 → フォールド。`,
     }
   }
