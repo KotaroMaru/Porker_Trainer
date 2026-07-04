@@ -4,14 +4,23 @@ import { createDeck, cardKey } from '../../engine/deck'
 
 /**
  * 1ストリート分のベッティングツリーを構築する。
- * サイズ抽象化(承認済みプラン): ベット33%/75%pot+オールイン、レイズ55%pot+オールイン
- * (レイズ後の再レイズはオールインのみ、フォールド/コールで打ち切り)。
+ * サイズ抽象化(承認済みプラン、2026-07-04仕様更新): ベット33%/75%pot+オールイン、
+ * レイズ55%pot+オールイン。レイズに直面した側は fold/call/allin(再レイズ)の3択
+ * (サイズドの再レイズは提示しない。再レイズはオールインのみ)。オールインに直面した
+ * 側はfold/callのみ(相手に残りスタックがないため構造的に連鎖が止まる)。
  *
  * ベット額 = 現在のポット × betSizesPct。
  * レイズ額(コール分を除いた追加分) = (相手の賭け額をコールした後のポット) × raiseSizePct
- *   raiseTotal(コール込みの合計拠出) = callAmount + raiseSizePct × (potBeforeBet + 2 × callAmount)
- * どちらも実効スタックを超える場合はオールインに切り詰め、オールインとの差が小さすぎる
- * 場合(< allinCollapseThresholdBb)はオールイン1本に統合してノード数の重複を避ける。
+ *   raiseTotal(コール込みの合計拠出) = callTotal + raiseSizePct × (potBeforeBet + 2 × callAmount)
+ * どちらも相手の最大可能拠出(自身の既存拠出+残りスタック)を超える場合はオールインに
+ * 切り詰め、オールインとの差が小さすぎる場合(< allinCollapseThresholdBb)はオールイン
+ * 1本に統合してノード数の重複を避ける。
+ *
+ * 重要な不変条件: state.contributed[p]は「このストリートでpがこれまでに投入した
+ * 累計額」であり、buildFacingBetのamount引数は「actorがこの時点で持つ累計投入額
+ * (今回のアクションで到達する額)」を表す。相手(other)がコール/レイズする際に
+ * 実際に追加投入すべき額は amount − state.contributed[other] (deficit)であり、
+ * amountそのものではない(2手目以降のレイズ合戦で両者の既存投入額が異なるため)。
  */
 export interface ActionTreeOptions {
   potBb: number
@@ -57,10 +66,14 @@ export function buildStreetTree(opts: ActionTreeOptions): TreeNode {
     contributed: [0, 0],
   }
 
-  /** betAmountを実効スタックで切り詰め、上限に近ければallin扱いにする。戻り値: [実際のベット額, allinか] */
-  function clampBet(desired: number, remainingStack: number): [number, boolean] {
-    if (desired >= remainingStack - collapseThreshold) return [remainingStack, true]
-    return [desired, false]
+  /**
+   * 希望する「累計投入総額」を、そのプレイヤーが到達しうる最大累計投入額
+   * (maxTotal = 既存投入額+残りスタック)で切り詰める。上限に近ければallin扱いにする。
+   * 戻り値: [実際の累計投入総額, allinか]
+   */
+  function clampBet(desiredTotal: number, maxTotal: number): [number, boolean] {
+    if (desiredTotal >= maxTotal - collapseThreshold) return [maxTotal, true]
+    return [desiredTotal, false]
   }
 
   /** まだ誰もこのストリートでベットしていない状態でのアクション(check or bet系)。 */
@@ -105,25 +118,41 @@ export function buildStreetTree(opts: ActionTreeOptions): TreeNode {
     return { kind: 'decision', player: actor, actionLabels, children }
   }
 
-  /** actorがamountをbet/raiseした直後、相手(other)がfold/call/raise/allinを選ぶ状態。 */
-  function buildFacingBet(state: StreetState, actor: PlayerIdx, amount: number, actorAllin: boolean, isReraise = false): TreeNode {
+  /**
+   * actorがこのアクションで累計投入額をactorNewTotalへ引き上げた直後、
+   * 相手(other)がfold/call/raise/allinを選ぶ状態。
+   * actorNewTotalは(deltaではなく)actorの「このストリートでの累計投入総額」であること
+   * (呼び出し側は常に総額を渡す。関数内部で state.contributed[actor] との差分から
+   * 実際の追加投入額(delta)を導出する)。
+   */
+  function buildFacingBet(state: StreetState, actor: PlayerIdx, actorNewTotal: number, actorAllin: boolean, isReraise = false): TreeNode {
     const other: PlayerIdx = actor === 0 ? 1 : 0
+    const actorDelta = actorNewTotal - state.contributed[actor]
     const newContributed: [number, number] = [...state.contributed]
-    newContributed[actor] += amount
+    newContributed[actor] = actorNewTotal
     const newState: StreetState = {
-      potBb: state.potBb + amount,
+      potBb: state.potBb + actorDelta,
       stacks: [state.stacks[0], state.stacks[1]] as [number, number],
       contributed: newContributed,
     }
-    newState.stacks[actor] -= amount
+    newState.stacks[actor] -= actorDelta
 
     const actionLabels: string[] = ['fold', 'call']
     const foldOutcome: TerminalNode['outcome'] = { kind: 'fold', foldedPlayer: other }
     const children: TreeNode[] = [terminal(newState, foldOutcome)]
 
-    // call: otherはamount分を投入するが、自身のスタックがamount未満なら
+    // otherがこの時点までに投入済みの額(actorの当該ベットとは独立)。コール/レイズの
+    // 際に実際に追加投入すべき額は、actorNewTotal(actorの累計投入額)からこれを
+    // 差し引いたdeficitであり、actorNewTotalそのものではない
+    // (レイズ合戦では両者の既存投入額が異なる)。
+    const otherContributed = state.contributed[other]
+    const otherRemaining = newState.stacks[other]
+    const otherMaxTotal = otherContributed + otherRemaining
+    const deficit = actorNewTotal - otherContributed
+
+    // call: otherはdeficit分を追加投入するが、残りスタックがdeficit未満なら
     // 「コールフォーレス」(ショートスタックのオールインコール)としてスタック分だけ投入する
-    const callAmount = Math.min(amount, newState.stacks[other])
+    const callAmount = Math.min(deficit, otherRemaining)
     const callState: StreetState = {
       potBb: newState.potBb + callAmount,
       stacks: [newState.stacks[0], newState.stacks[1]] as [number, number],
@@ -133,27 +162,31 @@ export function buildStreetTree(opts: ActionTreeOptions): TreeNode {
     callState.contributed[other] += callAmount
     children.push(terminal(callState, { kind: 'showdown' }))
 
-    const otherRemaining = newState.stacks[other]
-    if (!actorAllin && !isReraise && otherRemaining > 0) {
-      // レイズ(1サイズのみ)+オールインの権利
-      const potAfterCall = newState.potBb + amount // 現在のpot(相手のbetを含む) + 自分がコールした分
-      const desiredRaiseExtra = raiseSizePct * potAfterCall
-      const desiredRaiseTotal = amount + desiredRaiseExtra
-      const [raiseTotal, raiseIsAllin] = clampBet(desiredRaiseTotal, otherRemaining)
-      if (raiseTotal > amount) {
-        const label = raiseIsAllin ? 'allin' : 'raise55'
-        actionLabels.push(label)
-        children.push(buildFacingBet(newState, other, raiseTotal, raiseIsAllin, true))
-        if (!raiseIsAllin) {
-          const [allinAmount] = clampBet(otherRemaining, otherRemaining)
-          if (Math.round(allinAmount * 100) !== Math.round(raiseTotal * 100)) {
+    // レイズ/再レイズの権利: actor自身がオールインしていない、かつotherが
+    // コールを上回る額を投入できる場合のみ(そうでなければコールで手が尽きている)。
+    if (!actorAllin && otherMaxTotal > actorNewTotal) {
+      if (!isReraise) {
+        // まだ誰も再レイズしていない: サイズドレイズ(1サイズ)+オールインの権利
+        const potAfterCall = newState.potBb + deficit // 現在のpot + otherがコールした場合の追加分
+        const desiredRaiseExtra = raiseSizePct * potAfterCall
+        const desiredRaiseTotal = actorNewTotal + desiredRaiseExtra
+        const [raiseTotal, raiseIsAllin] = clampBet(desiredRaiseTotal, otherMaxTotal)
+        if (raiseTotal > actorNewTotal) {
+          const label = raiseIsAllin ? 'allin' : 'raise55'
+          actionLabels.push(label)
+          children.push(buildFacingBet(newState, other, raiseTotal, raiseIsAllin, true))
+          if (!raiseIsAllin && Math.round(otherMaxTotal * 100) !== Math.round(raiseTotal * 100)) {
             actionLabels.push('allin')
-            children.push(buildFacingBet(newState, other, allinAmount, true, true))
+            children.push(buildFacingBet(newState, other, otherMaxTotal, true, true))
           }
+        } else {
+          actionLabels.push('allin')
+          children.push(buildFacingBet(newState, other, otherMaxTotal, true, true))
         }
-      } else if (otherRemaining > 0) {
+      } else {
+        // 既に誰かがレイズ済み: 再レイズはオールインのみ許可(2026-07-04仕様更新)
         actionLabels.push('allin')
-        children.push(buildFacingBet(newState, other, otherRemaining, true, true))
+        children.push(buildFacingBet(newState, other, otherMaxTotal, true, true))
       }
     }
 
