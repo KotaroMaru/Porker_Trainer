@@ -40,7 +40,14 @@ fn build_tree_config(starting_pot_chips: i32, effective_stack_chips: i32) -> Tre
 /// 未加工のActionTreeを1本走査し、「レイズに直面した側がさらにサイズドレイズで
 /// 再レイズできてしまう」ラインを列挙する(除去対象そのものを返す。除去対象の枝は
 /// 探索を打ち切るため、その内部の孫ラインは列挙不要)。
-/// チャンスノードは木構造がどのカードでも同一なため、代表1枚だけ辿る。
+///
+/// 注意: ActionTreeのplay()/available_actions()はチャンスノードを自動スキップして
+/// 「次の街の開始アクション一覧」を返す(ラインにチャンスアクションは現れない)。
+/// そのためis_chance_node()がtrueの地点では、決断ノードと同様に**全アクション**を
+/// 反復しつつレイズ段数カウンタだけを0にリセットする必要がある。かつて
+/// 「チャンスの代表1枚だけ辿る」つもりでactions[0]のみ再帰する誤実装になっており、
+/// ターン/リバーがベットで始まるライン配下の再レイズが刈り残されるバグがあった
+/// (P0-P3レビューで発見・修正済み。detects_no_raise_after_raise_in_full_treeが回帰網)。
 fn discover_prune_lines(config: &TreeConfig) -> Vec<Vec<Action>> {
     let mut tree = ActionTree::new(config.clone()).expect("initial ActionTree must build");
     let mut out = Vec::new();
@@ -53,21 +60,16 @@ fn discover_prune_lines_recursive(tree: &mut ActionTree, path: &mut Vec<Action>,
     if tree.is_terminal_node() {
         return;
     }
-    if tree.is_chance_node() {
-        let actions = tree.available_actions().to_vec();
-        let representative = actions[0];
-        tree.play(representative).expect("chance action must be playable");
-        path.push(representative);
-        discover_prune_lines_recursive(tree, path, 0, out); // 新しい街: レイズ段数リセット
-        path.pop();
-        tree.undo().expect("undo must succeed after chance play");
-        return;
-    }
+    // 新しい街に入る(チャンス通過)場合はレイズ段数をリセットする。
+    // 街の開始アクションはCheck/Bet/AllInのみでRaiseは現れないため、
+    // このリセットと下の決断ノード処理だけで全ラインを正しく走査できる。
+    let next_street_reset = tree.is_chance_node();
 
     let actions = tree.available_actions().to_vec();
     for action in actions {
         let is_raise = matches!(action, Action::Raise(_));
-        if raises_this_street >= 1 && is_raise {
+        let raises_before = if next_street_reset { 0 } else { raises_this_street };
+        if raises_before >= 1 && is_raise {
             let mut line = path.clone();
             line.push(action);
             out.push(line);
@@ -75,7 +77,7 @@ fn discover_prune_lines_recursive(tree: &mut ActionTree, path: &mut Vec<Action>,
         }
         tree.play(action).expect("action must be playable");
         path.push(action);
-        let next_raises = if is_raise { raises_this_street + 1 } else { raises_this_street };
+        let next_raises = if is_raise { raises_before + 1 } else { raises_before };
         discover_prune_lines_recursive(tree, path, next_raises, out);
         path.pop();
         tree.undo().expect("undo must succeed");
@@ -322,5 +324,40 @@ mod tests {
             let has_sized_raise = after_raise_actions.iter().any(|a| matches!(a, Action::Raise(_)));
             assert!(!has_sized_raise, "sized re-raise should have been pruned, got {after_raise_actions:?}");
         }
+    }
+
+    /// 刈り込み後の木を(チャンス跨ぎ含めて)全ライン走査し、
+    /// 「同一街内でRaiseの後に再びRaiseが現れるライン」がゼロであることを確認する。
+    /// かつてdiscover_prune_lines_recursiveのチャンスノード分岐がactions[0]しか
+    /// 探索せず、ターン/リバーのベット開始ライン配下の再レイズが刈り残される
+    /// バグがあった(浅スタック+フロップのみの旧テストでは検出不能だった)。
+    /// 実寸のBTN vs BB SRP構成(pot55/stack975、0.1bb単位チップ)で全域を検証する。
+    #[test]
+    fn detects_no_raise_after_raise_in_full_tree() {
+        fn walk(tree: &mut ActionTree, raises_this_street: usize, count: &mut usize) {
+            if tree.is_terminal_node() {
+                return;
+            }
+            let raises = if tree.is_chance_node() { 0 } else { raises_this_street };
+            let actions = tree.available_actions().to_vec();
+            for action in actions {
+                let is_raise = matches!(action, Action::Raise(_));
+                assert!(
+                    !(raises >= 1 && is_raise),
+                    "sized raise after a raise survived pruning: history={:?} action={action:?}",
+                    tree.history()
+                );
+                tree.play(action).unwrap();
+                *count += 1;
+                walk(tree, if is_raise { raises + 1 } else { raises }, count);
+                tree.undo().unwrap();
+            }
+        }
+
+        let config = build_tree_config(55, 975);
+        let mut tree = build_pruned_action_tree(config);
+        let mut visited = 0usize;
+        walk(&mut tree, 0, &mut visited);
+        assert!(visited > 100, "tree walk should cover a nontrivial number of lines, got {visited}");
     }
 }

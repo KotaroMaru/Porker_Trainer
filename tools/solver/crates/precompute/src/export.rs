@@ -43,6 +43,13 @@ pub fn write_binary(sol: &SolutionExport) -> Vec<u8> {
         let expected_len = node.action_labels.len() * hand_count;
         assert_eq!(node.freq.len(), expected_len, "freq length mismatch for node {}", node.node_id);
         assert_eq!(node.ev_bb.len(), expected_len, "ev length mismatch for node {}", node.node_id);
+        // ラベルの重複はnodeId衝突(=別ラインが同じIDになる)として静かに壊れるため
+        // ここで検出する。bet_labelの近接判定が万一同一ラベルへ写像した場合の保険。
+        for (i, a) in node.action_labels.iter().enumerate() {
+            for b in &node.action_labels[i + 1..] {
+                assert_ne!(a, b, "duplicate action label '{a}' in node '{}'", node.node_id);
+            }
+        }
     }
 
     let mut header = Vec::new();
