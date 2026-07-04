@@ -22,3 +22,7 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Rust事前計算パイプライン(tools/solver/)のビルド成果物(Cargo.lockは
+# 再現性のためコミットする。バイナリクレートのため.gitignoreしない)
+tools/solver/target/

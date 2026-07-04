@@ -1,0 +1,18 @@
+source: https://github.com/b-inary/postflop-solver
+rev: 9d1509fe5077d019825f833eed04b16d342dfda1
+date: 2023-10-01 21:59:55 +0900
+license: AGPL-3.0-or-later
+note: プロジェクトは2023年10月から開発停止(アーカイブ)。アーカイブ済みリスクを
+  封じるため、.git履歴を除いたソースをこのリポジトリにin-treeコピーとして固定する
+  (P3プラン参照)。原則として改変は加えず、原本のまま vendor/postflop-solver/ 配下に
+  置く。
+
+## 例外: rustc 1.96.0向けの最小限の構文互換パッチ(2026-07-05)
+
+`src/action_tree.rs`の3箇所(`current_node`/`current_node_skip_chance`内)で
+`node = &*(*node).children[N].lock();` という生ポインタ経由の暗黙autorefパターンが、
+2023年当時のrustcでは警告のみだったが、rustc 1.96.0では
+`dangerous_implicit_autorefs`により拒否(hard error)されるようになっていた。
+挙動は一切変えず、コンパイラが提案する通り明示的な参照を挟む形
+(`&*(&(*node).children)[N].lock()`)に書き換えただけ(意味論上の変更なし、
+純粋な構文互換性のためのパッチ)。差分は3行のみ。

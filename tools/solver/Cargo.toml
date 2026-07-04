@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/precompute"]
+# vendor/postflop-solverはワークスペースメンバーの`members`に含めていなくても、
+# ワークスペース配下のパス依存はCargoが自動的に暗黙メンバーとして扱ってしまう。
+# 暗黙メンバーになるとcargo build/test(引数なし)実行時にそれ自身のデフォルト
+# feature(bincode込み、crates.io最新bincodeとAPI非互換でビルド不可)で独立にも
+# ビルドされてしまうため、excludeで明示的にワークスペース対象外にする。
+# precompute crateのパス依存としてのみ解決させ、precomputeが指定するfeature
+# (rayonのみ)でビルドする。
+exclude = ["vendor/postflop-solver"]

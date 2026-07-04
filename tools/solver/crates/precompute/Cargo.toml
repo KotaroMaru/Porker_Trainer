@@ -1,0 +1,18 @@
+[package]
+name = "precompute"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# bincode(保存/読込機能)は使わないため無効化する。crates.io最新のbincode 2.0.1は
+# vendorしたpostflop-solverが前提とする2.0.0-rc.3とAPI非互換(Decode<Context>化)の
+# ため、デフォルトfeatureのままではビルドできない。rayon(並列化)のみ有効にする。
+postflop-solver = { path = "../../vendor/postflop-solver", default-features = false, features = ["rayon"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "precompute"
+path = "src/main.rs"
