@@ -1,4 +1,6 @@
 import { computeExploitability, selfPlayValue } from './exploitability'
+import { buildBlockingContexts, buildScoreContexts, computeShowdownValue, computeFoldValue } from './terminalEval'
+import type { BlockingContext, ScoreContext } from './terminalEval'
 
 // Discounted CFR (Brown & Sandholm 2019) の汎用ソルバーコア。
 //
@@ -35,6 +37,14 @@ export interface TerminalNode {
   /** 各プレイヤーがこのサブゲーム中に追加投入した額(bb)。サブゲーム開始時のポットは含まない。 */
   contributed: [number, number]
   outcome: FoldOutcome | ShowdownOutcome
+  /**
+   * このターミナル時点で確定している場のカード(cardKey形式の文字列、例:"13c")。
+   * チャンスノード(次の共有カードを配る)を経由する木では、分岐ごとに異なる
+   * ボードでショーダウンを迎えるため、スコア計算はターミナルごとにこのboardを
+   * 使って行う必要がある。チャンスノードを持たない単一ボードのゲーム
+   * (Kuhnポーカー等)ではboardを省略でき、その場合CfrGame.scoreは第2引数を無視してよい。
+   */
+  board?: string[]
 }
 
 export interface DecisionNode {
@@ -65,14 +75,14 @@ export interface CfrGame<Hand> {
   root: TreeNode
   players: [HandUniverse<Hand>, HandUniverse<Hand>]
   /**
-   * 正の値ならh0が勝つ、負ならh1が勝つ、0は引き分け。
-   * 重要: v1(player1視点の反実仮想値)の計算では引数の順序を入れ替えて
-   * compare(uni1.hands[h1], uni0.hands[h0]) の形でも呼び出される。
-   * そのためcompareは「引数の順序に依存しない」対称な実装にすること
-   * (例: 全ハンドを1本の強さスケールにマッピングし compare=(a,b)=>strength(a)-strength(b)
-   * とする。片方の引数がplayer0の手であることを前提にした分岐は不可)。
+   * 手の絶対的な強さスコアを返す(値そのものに意味はなく、大小関係のみが使われる。
+   * 同点=引き分け)。第2引数はそのターミナルのTerminalNode.board(存在すれば)。
+   * ボードに依存しないトイゲーム(Kuhn等)では第2引数を無視してよい。
+   * h0側/h1側どちらの手が渡されても同じ基準でスコアを返す、単一のスケールに
+   * すること(以前はcompare(h0,h1)形式で引数順序に依存するバグを2度踏んだため、
+   * 単項のscore関数に設計変更した)。
    */
-  compare: (h0: Hand, h1: Hand) => number
+  score: (h: Hand, board?: string[]) => number
 }
 
 export interface CfrOptions {
@@ -84,6 +94,10 @@ export interface CfrOptions {
   alpha?: number
   beta?: number
   gamma?: number
+  /** checkEveryIterationsごとに呼ばれる進捗コールバック(Worker側の進捗表示用)。 */
+  onProgress?: (iterationsRun: number, exploitability: number) => void
+  /** trueを返すようになったら次のチェックポイントで解を打ち切る(キャンセル用)。 */
+  shouldCancel?: () => boolean
 }
 
 export interface NodeStrategy {
@@ -110,10 +124,59 @@ export interface RegretEntry {
   weightSum: Float64Array
   actionCount: number
   handCount: number
+  /** currentStrategyの結果を書き込む再利用バッファ([h*actionCount+a]でアクセス)。
+   *  各ノードは1反復につき1回だけ評価される(このモジュール冒頭の前提)ため、
+   *  ノード専属のバッファを使い回しても上書き競合は起きない。 */
+  stratScratch: Float64Array
 }
 
 export function blockedByCard(cardsOfHand: string[], card: string): boolean {
   return cardsOfHand.includes(card)
+}
+
+/**
+ * 1回のソルブを通して共有する評価用キャッシュ。
+ * - ブロッキング構造(BlockingContext)はボードに依存しないため1回だけ構築する。
+ * - スコアコンテキスト(ScoreContext)はボードにのみ依存する。ターミナルは
+ *   数千個あってもユニークなボードはリバーカード数(≈48)しかないため、
+ *   ターミナル単位ではなく**ボード文字列単位**でキャッシュする。
+ *
+ * かつてはsolveCfr/selfPlayValue/bestResponseValueがそれぞれターミナル単位の
+ * キャッシュを別々に持っており、スコア表構築(全コンボ×全ターミナルの役判定
+ * ≈230万回のevaluate≈37秒)が1回のソルブ+収束判定で5回も再実行されていた。
+ * これがP2ベンチマークで実行時間の96%を占めるボトルネックだった。
+ * ボード単位キー(48種)+全関数共有により、構築コストは1ソルブあたり
+ * 48ボード×352コンボ≈1.7万回のevaluate(<1秒)まで下がる。
+ */
+export interface EvalCache {
+  blockCtx: [BlockingContext, BlockingContext]
+  getScoreContexts: (node: TerminalNode) => [ScoreContext, ScoreContext]
+}
+
+export function createEvalCache<Hand>(game: CfrGame<Hand>): EvalCache {
+  const [uni0, uni1] = game.players
+  const cards0 = uni0.hands.map(uni0.cards)
+  const cards1 = uni1.hands.map(uni1.cards)
+  const n0 = uni0.hands.length
+  const n1 = uni1.hands.length
+  const blockCtx = buildBlockingContexts(cards0, cards1)
+  const byBoard = new Map<string, [ScoreContext, ScoreContext]>()
+  function getScoreContexts(node: TerminalNode): [ScoreContext, ScoreContext] {
+    // boardなし(Kuhn等の単一ボードゲーム)はキー''で全ターミナル共有になる。
+    // その場合scoreはboard非依存なので共有して正しい。
+    const key = node.board ? node.board.join(',') : ''
+    let ctx = byBoard.get(key)
+    if (!ctx) {
+      const scores0 = new Float64Array(n0)
+      for (let h0 = 0; h0 < n0; h0++) scores0[h0] = game.score(uni0.hands[h0], node.board)
+      const scores1 = new Float64Array(n1)
+      for (let h1 = 0; h1 < n1; h1++) scores1[h1] = game.score(uni1.hands[h1], node.board)
+      ctx = buildScoreContexts(scores0, scores1, blockCtx[0], blockCtx[1])
+      byBoard.set(key, ctx)
+    }
+    return ctx
+  }
+  return { blockCtx, getScoreContexts }
 }
 
 export function handsBlock(cardsA: string[], cardsB: string[]): boolean {
@@ -166,8 +229,10 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
   const n0 = uni0.hands.length
   const n1 = uni1.hands.length
 
-  // 手同士のブロッキング行列(事前計算)
-  const blocked01: boolean[][] = cards0.map((c0) => cards1.map((c1) => handsBlock(c0, c1)))
+  // ブロッキング構造+ボード単位スコア表の共有キャッシュ。walk本体だけでなく
+  // exploitability測定(selfPlayValue/bestResponseValue)にも渡して再構築を防ぐ。
+  const evalCache = createEvalCache(game)
+  const [blockCtx0, blockCtx1] = evalCache.blockCtx
 
   const regretTable = new Map<DecisionNode, RegretEntry>()
 
@@ -181,75 +246,56 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
         weightSum: new Float64Array(handCount),
         actionCount,
         handCount,
+        stratScratch: new Float64Array(handCount * actionCount),
       }
       regretTable.set(node, e)
     }
     return e
   }
 
-  function currentStrategy(e: RegretEntry): number[][] {
-    const strat: number[][] = []
+  /** regret-matchingによる現在戦略。戻り値はentry専属の再利用バッファ([h*actionCount+a])。 */
+  function currentStrategy(e: RegretEntry): Float64Array {
+    const strat = e.stratScratch
+    const ac = e.actionCount
+    const uniform = 1 / ac
     for (let h = 0; h < e.handCount; h++) {
-      const row = new Array<number>(e.actionCount).fill(0)
+      const base = h * ac
       let posSum = 0
-      for (let a = 0; a < e.actionCount; a++) {
-        const r = Math.max(0, e.regretSum[h * e.actionCount + a])
-        row[a] = r
-        posSum += r
+      for (let a = 0; a < ac; a++) {
+        const r = e.regretSum[base + a]
+        const pos = r > 0 ? r : 0
+        strat[base + a] = pos
+        posSum += pos
       }
       if (posSum > 0) {
-        for (let a = 0; a < e.actionCount; a++) row[a] /= posSum
+        for (let a = 0; a < ac; a++) strat[base + a] /= posSum
       } else {
-        row.fill(1 / e.actionCount)
+        for (let a = 0; a < ac; a++) strat[base + a] = uniform
       }
-      strat.push(row)
     }
     return strat
   }
 
+  // スコアコンテキストはevalCache(ボード単位キャッシュ)から取得する。
+  // foldターミナルはスコアを一切使わないため、ボードが未確定でも安全な
+  // computeFoldValue(BlockingContextのみ使用)だけを呼ぶ。
+  const getScoreContexts = evalCache.getScoreContexts
+
   function terminalValue(node: TerminalNode, reach0: Float64Array, reach1: Float64Array): [Float64Array, Float64Array] {
-    const v0 = new Float64Array(n0)
-    const v1 = new Float64Array(n1)
     const [c0, c1] = node.contributed
 
     if (node.outcome.kind === 'fold') {
       const { foldedPlayer } = node.outcome
       const net0 = foldedPlayer === 1 ? node.potBb - c0 : -c0
       const net1 = foldedPlayer === 0 ? node.potBb - c1 : -c1
-      for (let h0 = 0; h0 < n0; h0++) {
-        let sum = 0
-        for (let h1 = 0; h1 < n1; h1++) if (!blocked01[h0][h1]) sum += reach1[h1]
-        v0[h0] = sum * net0
-      }
-      for (let h1 = 0; h1 < n1; h1++) {
-        let sum = 0
-        for (let h0 = 0; h0 < n0; h0++) if (!blocked01[h0][h1]) sum += reach0[h0]
-        v1[h1] = sum * net1
-      }
+      const v0 = computeFoldValue(blockCtx0, reach1, net0)
+      const v1 = computeFoldValue(blockCtx1, reach0, net1)
       return [v0, v1]
     }
 
-    // showdown
-    for (let h0 = 0; h0 < n0; h0++) {
-      let sum = 0
-      for (let h1 = 0; h1 < n1; h1++) {
-        if (blocked01[h0][h1]) continue
-        const cmp = game.compare(uni0.hands[h0], uni1.hands[h1])
-        const share = cmp > 0 ? node.potBb : cmp === 0 ? node.potBb / 2 : 0
-        sum += reach1[h1] * (share - c0)
-      }
-      v0[h0] = sum
-    }
-    for (let h1 = 0; h1 < n1; h1++) {
-      let sum = 0
-      for (let h0 = 0; h0 < n0; h0++) {
-        if (blocked01[h0][h1]) continue
-        const cmp = game.compare(uni1.hands[h1], uni0.hands[h0])
-        const share = cmp > 0 ? node.potBb : cmp === 0 ? node.potBb / 2 : 0
-        sum += reach0[h0] * (share - c1)
-      }
-      v1[h1] = sum
-    }
+    const [scoreCtx0, scoreCtx1] = getScoreContexts(node)
+    const v0 = computeShowdownValue(scoreCtx0, blockCtx0, reach1, node.potBb, c0)
+    const v1 = computeShowdownValue(scoreCtx1, blockCtx1, reach0, node.potBb, c1)
     return [v0, v1]
   }
 
@@ -290,11 +336,11 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
     for (let a = 0; a < actionCount; a++) {
       if (acting === 0) {
         const newReach0 = new Float64Array(n0)
-        for (let h = 0; h < n0; h++) newReach0[h] = reach0[h] * strategy[h][a]
+        for (let h = 0; h < n0; h++) newReach0[h] = reach0[h] * strategy[h * actionCount + a]
         childValues.push(walk(node.children[a], newReach0, reach1, iter))
       } else {
         const newReach1 = new Float64Array(n1)
-        for (let h = 0; h < n1; h++) newReach1[h] = reach1[h] * strategy[h][a]
+        for (let h = 0; h < n1; h++) newReach1[h] = reach1[h] * strategy[h * actionCount + a]
         childValues.push(walk(node.children[a], reach0, newReach1, iter))
       }
     }
@@ -309,7 +355,7 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
       const nodeValue = new Float64Array(n0)
       for (let h = 0; h < n0; h++) {
         let val = 0
-        for (let a = 0; a < actionCount; a++) val += strategy[h][a] * childValues[a][0][h]
+        for (let a = 0; a < actionCount; a++) val += strategy[h * actionCount + a] * childValues[a][0][h]
         nodeValue[h] = val
       }
       for (let h = 0; h < n0; h++) {
@@ -319,7 +365,7 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
           const discounted = prevR > 0 ? prevR * posCoef : prevR * negCoef
           const instRegret = childValues[a][0][h] - nodeValue[h]
           entry.regretSum[idx] = discounted + instRegret
-          entry.strategySum[idx] += stratWeight * reach0[h] * strategy[h][a]
+          entry.strategySum[idx] += stratWeight * reach0[h] * strategy[idx]
         }
         entry.weightSum[h] += stratWeight * reach0[h]
       }
@@ -333,7 +379,7 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
       const nodeValue = new Float64Array(n1)
       for (let h = 0; h < n1; h++) {
         let val = 0
-        for (let a = 0; a < actionCount; a++) val += strategy[h][a] * childValues[a][1][h]
+        for (let a = 0; a < actionCount; a++) val += strategy[h * actionCount + a] * childValues[a][1][h]
         nodeValue[h] = val
       }
       for (let h = 0; h < n1; h++) {
@@ -343,7 +389,7 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
           const discounted = prevR > 0 ? prevR * posCoef : prevR * negCoef
           const instRegret = childValues[a][1][h] - nodeValue[h]
           entry.regretSum[idx] = discounted + instRegret
-          entry.strategySum[idx] += stratWeight * reach1[h] * strategy[h][a]
+          entry.strategySum[idx] += stratWeight * reach1[h] * strategy[idx]
         }
         entry.weightSum[h] += stratWeight * reach1[h]
       }
@@ -381,12 +427,14 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
     iterationsRun = t
 
     if (t % checkEvery === 0 || t === maxIterations) {
-      exploitability = computeExploitability(game, getAverageStrategy)
+      exploitability = computeExploitability(game, getAverageStrategy, evalCache)
+      opts.onProgress?.(t, exploitability)
       if (exploitability < targetExploitability) break
+      if (opts.shouldCancel?.()) break
     }
   }
 
-  const gameValue = selfPlayValue(game, getAverageStrategy)
+  const gameValue = selfPlayValue(game, getAverageStrategy, evalCache)
 
   return {
     game,

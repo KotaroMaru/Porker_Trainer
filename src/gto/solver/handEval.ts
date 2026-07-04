@@ -11,9 +11,26 @@ function comboCards(combo: Combo): Set<string> {
   return new Set(combo.map(cardKey))
 }
 
+/** cardKey形式("13c")の文字列をCardに戻す(rank+suit、rankは複数桁ありうるため末尾1文字をsuitとする)。 */
+function parseCardKey(key: string): Card {
+  const suit = key[key.length - 1] as Card['suit']
+  const rank = Number(key.slice(0, -1)) as Card['rank']
+  return { rank, suit }
+}
+
 /**
- * 指定ボードでのコンボ比較関数を作る。CfrGame.compareにそのまま渡せる
- * (compareHandsは両者の絶対スコアを比較するだけなので、引数の順序に依存しない)。
+ * コンボの絶対的な強さスコアを返す。CfrGame<Combo>.scoreにそのまま渡せる
+ * (第2引数はTerminalNode.board=cardKey形式の文字列配列。チャンスノードを
+ * 経由する木では分岐ごとに異なるボードで評価する必要があるため必須)。
+ */
+export function scoreComboOnBoard(combo: Combo, boardKeys?: string[]): number {
+  const board = (boardKeys ?? []).map(parseCardKey)
+  return evaluate([...combo, ...board]).score
+}
+
+/**
+ * 指定ボード固定でのコンボ比較関数を作る(チャンスノードを持たない、単一ボードの
+ * 部分ゲーム専用。ボードが分岐ごとに変わる場合はscoreComboOnBoardを直接使うこと)。
  */
 export function compareCombosOnBoard(board: Card[]): (a: Combo, b: Combo) => number {
   return (a, b) => compareHands([...a, ...board], [...b, ...board])

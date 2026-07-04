@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { solveCfr } from './cfr'
 import type { CfrGame, DecisionNode } from './cfr'
-import { compareCombosOnBoard } from './handEval'
+import { scoreComboOnBoard } from './handEval'
 import { buildStreetTree, collectDecisions } from '../tree/actionTree'
 import { expandHandStr } from '../../analysis/range'
 import type { Card } from '../../engine/types'
@@ -54,13 +54,14 @@ describe('統合テスト: 実際のポーカーサブゲームをactionTree+han
     const decisions = collectDecisions(tree)
     expect(decisions.length).toBeGreaterThan(0)
 
+    const boardKeys = board.map((c) => `${c.rank}${c.suit}`)
     const game: CfrGame<Combo> = {
       root: tree,
       players: [
         { hands: heroCombos, initialReach: heroCombos.map(() => 1), cards: comboCards },
         { hands: villainCombos, initialReach: villainCombos.map(() => 1), cards: comboCards },
       ],
-      compare: compareCombosOnBoard(board),
+      score: (combo) => scoreComboOnBoard(combo, boardKeys),
     }
 
     const solution = solveCfr(game, { maxIterations: 300, targetExploitability: 0.01, checkEveryIterations: 50 })

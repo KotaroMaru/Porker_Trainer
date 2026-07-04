@@ -68,7 +68,7 @@ function buildGame(): CfrGame<Hero | Villain> {
   return {
     root: buildTree() as TreeNode,
     players: [heroUniverse, villainUniverse],
-    compare: (h0, h1) => STRENGTH[h0] - STRENGTH[h1],
+    score: (h) => STRENGTH[h],
   }
 }
 

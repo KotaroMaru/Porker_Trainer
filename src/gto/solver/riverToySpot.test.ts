@@ -69,7 +69,7 @@ function buildGame(): CfrGame<Bettor | Caller> {
   return {
     root: buildTree(),
     players: [bettorUniverse, callerUniverse],
-    compare: (h0, h1) => STRENGTH[h0] - STRENGTH[h1],
+    score: (h) => STRENGTH[h],
   }
 }
 

@@ -1,4 +1,6 @@
-import type { TreeNode, TerminalNode, DecisionNode, PlayerIdx } from '../solver/cfr'
+import type { TreeNode, TerminalNode, DecisionNode, ChanceNode, PlayerIdx } from '../solver/cfr'
+import type { Card } from '../../engine/types'
+import { createDeck, cardKey } from '../../engine/deck'
 
 /**
  * 1ストリート分のベッティングツリーを構築する。
@@ -176,4 +178,94 @@ export function collectDecisions(node: TreeNode): DecisionNode[] {
   const out: DecisionNode[] = node.kind === 'decision' ? [node] : []
   for (const c of node.children) out.push(...collectDecisions(c))
   return out
+}
+
+// ============================================================
+// ターン部分ゲーム: ターン街のベッティングツリーを構築し、ベッティングが
+// (フォールドなく)完了した各地点を「リバーカードを1枚配るチャンスノード」+
+// 「新しいリバー街のベッティングツリー」に展開する。
+// ターン街の終端(fold以外)はまだ本当のショーダウンではなく「リバーへ進む」を
+// 意味するため、buildStreetTreeがそのまま返す'showdown'ターミナルを差し替える。
+// ============================================================
+
+export interface TurnSubgameOptions {
+  turnPotBb: number
+  effectiveStackBb: number
+  firstToAct: PlayerIdx
+  /** ターン+リバー街開始時点で既に場に出ている4枚(フロップ3+ターン1)。リバーの
+   *  チャンス分岐から除外する(カード除去)。 */
+  deadCards: Card[]
+  betSizesPct?: number[]
+  raiseSizePct?: number
+}
+
+/**
+ * 木を再帰的に複製しつつ、全ターミナルのcontributedにoffsetを加算し、
+ * boardを付与する(街をまたぐ累積・スコア計算用ボードのスタンプ)。
+ */
+function finalizeRiverTerminals(node: TreeNode, offset: [number, number], board: string[]): TreeNode {
+  if (node.kind === 'terminal') {
+    return {
+      ...node,
+      contributed: [node.contributed[0] + offset[0], node.contributed[1] + offset[1]],
+      board,
+    }
+  }
+  return { ...node, children: node.children.map((c) => finalizeRiverTerminals(c, offset, board)) }
+}
+
+function buildRiverChanceNode(turnTerminal: TerminalNode, opts: TurnSubgameOptions): ChanceNode {
+  const remaining0 = opts.effectiveStackBb - turnTerminal.contributed[0]
+  const remaining1 = opts.effectiveStackBb - turnTerminal.contributed[1]
+  const bothCanAct = remaining0 > 1e-9 && remaining1 > 1e-9
+
+  const usedKeys = new Set(opts.deadCards.map(cardKey))
+  const remainingDeck = createDeck().filter((c) => !usedKeys.has(cardKey(c)))
+  const cardLabels = remainingDeck.map(cardKey)
+  const deadCardKeys = opts.deadCards.map(cardKey)
+
+  const children: TreeNode[] = remainingDeck.map((riverCard) => {
+    const fullBoard = [...deadCardKeys, cardKey(riverCard)]
+    if (!bothCanAct) {
+      // 既にどちらかがオールイン: これ以上の意思決定はなくポットはターン終了時点で確定
+      const t: TerminalNode = {
+        kind: 'terminal',
+        potBb: turnTerminal.potBb,
+        contributed: turnTerminal.contributed,
+        outcome: { kind: 'showdown' },
+        board: fullBoard,
+      }
+      return t
+    }
+    const riverTree = buildStreetTree({
+      potBb: turnTerminal.potBb,
+      effectiveStackBb: Math.min(remaining0, remaining1),
+      firstToAct: opts.firstToAct,
+      betSizesPct: opts.betSizesPct,
+      raiseSizePct: opts.raiseSizePct,
+    })
+    return finalizeRiverTerminals(riverTree, turnTerminal.contributed, fullBoard)
+  })
+
+  return { kind: 'chance', cards: cardLabels, children }
+}
+
+function expandTurnShowdownsToRiver(node: TreeNode, opts: TurnSubgameOptions): TreeNode {
+  if (node.kind === 'terminal') {
+    if (node.outcome.kind === 'fold') return node // ハンド終了、リバー不要
+    return buildRiverChanceNode(node, opts) // ショーダウン→まだリバーが残っている
+  }
+  return { ...node, children: node.children.map((c) => expandTurnShowdownsToRiver(c, opts)) } as TreeNode
+}
+
+/** ターン街のベッティング+リバーのチャンスノード+リバー街のベッティングを結合した部分ゲーム木を構築する。 */
+export function buildTurnSubgameTree(opts: TurnSubgameOptions): TreeNode {
+  const turnTree = buildStreetTree({
+    potBb: opts.turnPotBb,
+    effectiveStackBb: opts.effectiveStackBb,
+    firstToAct: opts.firstToAct,
+    betSizesPct: opts.betSizesPct,
+    raiseSizePct: opts.raiseSizePct,
+  })
+  return expandTurnShowdownsToRiver(turnTree, opts)
 }

@@ -67,7 +67,7 @@ function buildKuhnGame(): CfrGame<KuhnCard> {
   return {
     root: buildKuhnTree(),
     players: [universe, universe],
-    compare: (h0, h1) => RANK[h0] - RANK[h1],
+    score: (h) => RANK[h],
   }
 }
 
