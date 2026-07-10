@@ -63,7 +63,7 @@ describe('createSpot / applyUserAction (実.binフィクスチャによる統合
     const chosenLabel = spot.decodedNode.actionLabels[0]
     const grade = applyUserAction(spot, chosenLabel)
     expect(grade.actionBreakdown.length).toBe(spot.decodedNode.actionLabels.length)
-    expect(typeof grade.correct).toBe('boolean')
+    expect(['correct', 'marginal', 'incorrect']).toContain(grade.verdict)
     expect(grade.evLossBb).toBeGreaterThanOrEqual(-1e-4) // 最善手との差は非負のはず(誤差許容)
   })
 
