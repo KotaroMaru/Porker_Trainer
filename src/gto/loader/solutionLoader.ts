@@ -24,10 +24,25 @@ class SolutionLru {
       if (oldest !== undefined) this.map.delete(oldest)
     }
   }
+  clear(): void {
+    this.map.clear()
+  }
 }
 
 const cache = new SolutionLru()
 const inflight = new Map<string, Promise<DecodedSolution>>()
+
+/**
+ * テスト専用: モジュールレベルのLRUキャッシュをクリアする。cacheはテストファイルの
+ * 生存期間中ずっと共有されるため、「fetch失敗時のエラーハンドリング」のように
+ * 必ずfetchを実際に呼ばせたいテストでは、直前に呼んでキャッシュヒットによる
+ * すり抜け(ランダムに選ばれたフロップが直近のテストで偶然キャッシュ済みだった
+ * 場合に発生する)を防ぐ。
+ */
+export function __resetSolutionCacheForTests(): void {
+  cache.clear()
+  inflight.clear()
+}
 
 function solutionKey(scenarioId: string, flopId: string): string {
   return `${scenarioId}/${flopId}`

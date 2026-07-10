@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { useGtoStore } from './store'
+import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 
 const originalFetch = globalThis.fetch
 
@@ -35,8 +36,21 @@ beforeEach(() => {
     grading: null,
     errorMessage: null,
     sessionTally: { spots: 0, correct: 0, marginal: 0, totalEvLossBb: 0 },
+    review: null,
+    reviewFeatures: [],
+    reviewFeaturesStatus: 'idle',
+    activeDecisionIdx: 0,
   })
 })
+
+/** setTimeout(0)で遅延実行されるcomputeSpotFeaturesの完了を待つ(実測約600ms/回)。 */
+async function waitForReviewFeatures(timeoutMs = 5000): Promise<void> {
+  const start = Date.now()
+  while (useGtoStore.getState().reviewFeaturesStatus === 'computing') {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting for reviewFeaturesStatus to leave "computing"')
+    await new Promise((r) => setTimeout(r, 20))
+  }
+}
 
 describe('useGtoStore', () => {
   it('startNewSpotでstatusがuserTurnになりspotが設定される', async () => {
@@ -92,6 +106,11 @@ describe('useGtoStore', () => {
   })
 
   it('fetch失敗時はstatusがerrorになりエラーメッセージが設定される', async () => {
+    // loadFlopSolutionのLRUキャッシュ(モジュールレベル・このテストファイルの
+    // 生存期間中共有)に、直前のテストでキャッシュ済みのフロップがpickWeightedFlop()に
+    // 偶然選ばれるとfetchを経由せず成功してしまう(実際に観測されたフレーク)。
+    // 必ずfetchを呼ばせるため事前にクリアする。
+    __resetSolutionCacheForTests()
     globalThis.fetch = (async () => {
       throw new Error('network down')
     }) as typeof fetch
@@ -113,5 +132,76 @@ describe('useGtoStore', () => {
         return new Response(arrayBuf, { status: 200 })
       }) as typeof fetch
     }
+  })
+
+  it('chooseAction直後にreviewが同期的に設定され、reviewFeaturesStatusはcomputingになる', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    const label = spot.decodedNode.actionLabels[0]
+
+    useGtoStore.getState().chooseAction(label)
+
+    const state = useGtoStore.getState()
+    expect(state.review).not.toBeNull()
+    expect(state.review?.decisions.length).toBe(1)
+    expect(state.reviewFeatures).toEqual([null])
+    expect(state.reviewFeaturesStatus).toBe('computing')
+    expect(state.activeDecisionIdx).toBe(0)
+  })
+
+  it('reviewFeaturesStatusはやがてreadyになり、reviewFeaturesにSpotFeaturesが入る', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+
+    await waitForReviewFeatures()
+
+    const state = useGtoStore.getState()
+    expect(state.reviewFeaturesStatus).toBe('ready')
+    expect(state.reviewFeatures.length).toBe(1)
+    expect(state.reviewFeatures[0]).not.toBeNull()
+    expect(state.reviewFeatures[0]?.handClass).toBeDefined()
+  })
+
+  it('nextSpotでreview/reviewFeatures/reviewFeaturesStatus/activeDecisionIdxがリセットされる', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('ready')
+
+    await useGtoStore.getState().nextSpot()
+
+    const state = useGtoStore.getState()
+    expect(state.review).toBeNull()
+    expect(state.reviewFeatures).toEqual([])
+    expect(state.reviewFeaturesStatus).toBe('idle')
+    expect(state.activeDecisionIdx).toBe(0)
+  })
+
+  it('setActiveDecisionIdxでactiveDecisionIdxが更新される', () => {
+    useGtoStore.getState().setActiveDecisionIdx(2)
+    expect(useGtoStore.getState().activeDecisionIdx).toBe(2)
+  })
+
+  it('計算完了前に次のスポットへ進んでも、古いreviewFeatures計算結果が新しいreviewへ混入しない', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const firstSpot = useGtoStore.getState().spot
+    if (!firstSpot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(firstSpot.decodedNode.actionLabels[0])
+    const firstReview = useGtoStore.getState().review
+
+    // computeSpotFeaturesの完了(約600ms)を待たずに次のスポットへ進む
+    await useGtoStore.getState().nextSpot()
+    expect(useGtoStore.getState().review).not.toBe(firstReview)
+
+    // 元のsetTimeoutコールバックが後から発火しても、reviewFeaturesStatusが
+    // 'idle'のまま(新スポットはまだ採点されていない)であることを確認する
+    await new Promise((r) => setTimeout(r, 800))
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('idle')
+    expect(useGtoStore.getState().review).toBeNull()
   })
 })
