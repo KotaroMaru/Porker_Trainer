@@ -4,39 +4,16 @@ import { boardFromFlop } from '../../gto/trainer/gameFlow'
 import { buildPreflopScript } from '../../gto/trainer/preflopScript'
 import { isOopPosition } from '../../gto/data/scenarios'
 import { CardView } from '../CardView'
-import type { GradeVerdict } from '../../gto/trainer/grading'
+import { ReviewScreen } from './ReviewScreen'
+import { actionLabelJa, rankLabel, suitSymbol } from './labels'
 
-// P4 Step D: フロップ単発モードの最小プレイ画面(承認済みUIモック指針準拠)。
-// 本格ReviewScreen+解説レイヤーはP5。
-
-const ACTION_LABEL_JA: Record<string, string> = {
-  check: 'チェック',
-  fold: 'フォールド',
-  call: 'コール',
-  bet33: 'ベット 33%',
-  bet75: 'ベット 75%',
-  raise55: 'レイズ 55%',
-  allin: 'オールイン',
-}
-
-const VERDICT_LABEL: Record<GradeVerdict, string> = {
-  correct: '○ 正解',
-  marginal: '△ 惜しい(境界上の手)',
-  incorrect: '✕ 不正解',
-}
-
-const VERDICT_COLOR: Record<GradeVerdict, string> = {
-  correct: 'var(--green-light)',
-  marginal: 'var(--gold)',
-  incorrect: 'var(--red)',
-}
-
-function actionLabelJa(label: string): string {
-  return ACTION_LABEL_JA[label] ?? label
-}
+// P4 Step D / P5 Step B9: フロップ単発モードのプレイ画面。採点後(status==='graded')は
+// フェルトテーブル+履歴ストリップごとReviewScreenにフルテイクオーバーする
+// (承認済みUX仕様: ボード+ハンドはReviewScreen側のコンパクト1行表示で代替、
+// モバイルで縦長になりすぎるのを防ぐ)。
 
 export function PlayScreen() {
-  const { status, spot, grading, chosenLabel, sessionTally, errorMessage, startNewSpot, chooseAction, nextSpot } = useGtoStore()
+  const { status, spot, sessionTally, errorMessage, startNewSpot, chooseAction } = useGtoStore()
 
   useEffect(() => {
     if (status === 'idle') void startNewSpot()
@@ -60,6 +37,17 @@ export function PlayScreen() {
 
   if (!spot) return null
 
+  if (status === 'graded') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <ReviewScreen />
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
+          単発モード ・ {sessionTally.spots}問 ・ 正解{sessionTally.correct} ・ 累計EVロス {sessionTally.totalEvLossBb.toFixed(2)}bb
+        </div>
+      </div>
+    )
+  }
+
   const oopIsRaiser = isOopPosition(spot.scenario.raiser.position, spot.scenario.defender.position)
   const oopPosition = oopIsRaiser ? spot.scenario.raiser.position : spot.scenario.defender.position
   const ipPosition = oopIsRaiser ? spot.scenario.defender.position : spot.scenario.raiser.position
@@ -68,7 +56,6 @@ export function PlayScreen() {
 
   const preflopLines = buildPreflopScript(spot.scenario)
   const board = boardFromFlop(spot.flop)
-  const graded = status === 'graded' && grading
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -107,9 +94,7 @@ export function PlayScreen() {
               {botPosition}: {actionLabelJa(entry.label)}
             </div>
           ))}
-          <div style={{ background: graded ? 'transparent' : 'var(--gold)', color: graded ? 'var(--text)' : '#000', display: 'inline-block', padding: '1px 6px', borderRadius: 4 }}>
-            {userPosition}: {graded && chosenLabel ? actionLabelJa(chosenLabel) : '?'}
-          </div>
+          <div style={{ background: 'var(--gold)', color: '#000', display: 'inline-block', padding: '1px 6px', borderRadius: 4 }}>{userPosition}: ?</div>
         </div>
       </div>
 
@@ -149,63 +134,27 @@ export function PlayScreen() {
         </div>
       </div>
 
-      {/* アクションボタン or 採点結果 */}
-      {!graded ? (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {spot.actionsWithAmounts.map((a) => (
-            <button
-              key={a.label}
-              onClick={() => chooseAction(a.label)}
-              style={{
-                flex: '1 1 100px',
-                padding: '12px 8px',
-                fontSize: 14,
-                fontWeight: 600,
-                background: 'var(--panel-bg-light)',
-                border: '1px solid var(--panel-border)',
-                borderRadius: 8,
-              }}
-            >
-              {actionLabelJa(a.label)}
-              {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div style={{ border: '1px solid var(--panel-border)', borderRadius: 8, padding: 12 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: VERDICT_COLOR[grading.verdict], marginBottom: 4 }}>
-            {VERDICT_LABEL[grading.verdict]}
-            {grading.evLossBb > 0.01 && <span style={{ fontWeight: 400, fontSize: 13, marginLeft: 8 }}>EVロス -{grading.evLossBb.toFixed(2)}bb</span>}
-          </div>
-          <table style={{ width: '100%', fontSize: 12.5, marginTop: 8, borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ color: 'var(--text-dim)' }}>
-                <td>アクション</td>
-                <td style={{ textAlign: 'right' }}>頻度</td>
-                <td style={{ textAlign: 'right' }}>EV</td>
-              </tr>
-            </thead>
-            <tbody>
-              {grading.actionBreakdown.map((entry) => (
-                <tr key={entry.label} style={{ color: entry.label === grading.bestLabel ? 'var(--gold-light)' : 'var(--text)' }}>
-                  <td>
-                    {entry.label === grading.bestLabel && '★ '}
-                    {actionLabelJa(entry.label)}
-                  </td>
-                  <td style={{ textAlign: 'right' }}>{(entry.freq * 100).toFixed(1)}%</td>
-                  <td style={{ textAlign: 'right' }}>{entry.evBb.toFixed(2)}bb</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {/* アクションボタン */}
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {spot.actionsWithAmounts.map((a) => (
           <button
-            onClick={() => void nextSpot()}
-            style={{ marginTop: 12, width: '100%', padding: '10px', fontWeight: 600, background: 'var(--green-mid)', border: '1px solid var(--green-light)', borderRadius: 8, color: 'var(--gold-light)' }}
+            key={a.label}
+            onClick={() => chooseAction(a.label)}
+            style={{
+              flex: '1 1 100px',
+              padding: '12px 8px',
+              fontSize: 14,
+              fontWeight: 600,
+              background: 'var(--panel-bg-light)',
+              border: '1px solid var(--panel-border)',
+              borderRadius: 8,
+            }}
           >
-            次のスポット
+            {actionLabelJa(a.label)}
+            {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
           </button>
-        </div>
-      )}
+        ))}
+      </div>
 
       {/* セッション状態 */}
       <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
@@ -213,12 +162,4 @@ export function PlayScreen() {
       </div>
     </div>
   )
-}
-
-const RANK_LABELS: Record<number, string> = { 14: 'A', 13: 'K', 12: 'Q', 11: 'J', 10: 'T' }
-function rankLabel(rank: number): string {
-  return RANK_LABELS[rank] ?? String(rank)
-}
-function suitSymbol(suit: string): string {
-  return { c: '♣', d: '♦', h: '♥', s: '♠' }[suit] ?? suit
 }
