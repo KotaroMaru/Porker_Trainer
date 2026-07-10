@@ -19,8 +19,36 @@ mod tree_walk;
 
 use export::write_binary;
 use scenario::Scenario;
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use tree_walk::{solve_scenario_flop, solve_turn_subgame, SolveOptions};
+
+/// per-flopの収束エビデンス記録(P4 Step0)。出力ディレクトリ直下にmanifest.jsonとして
+/// 書き出す。95フロップ全てが目標exploitabilityへ到達したかを事後に確認できるようにする。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ManifestEntry {
+    flop: String,
+    expl_pot_frac: f32,
+    seconds: f64,
+    bytes: usize,
+}
+
+fn manifest_path(scenario_out_dir: &Path) -> PathBuf {
+    scenario_out_dir.join("manifest.json")
+}
+
+fn load_manifest(path: &Path) -> BTreeMap<String, ManifestEntry> {
+    let Ok(text) = std::fs::read_to_string(path) else { return BTreeMap::new() };
+    let Ok(entries) = serde_json::from_str::<Vec<ManifestEntry>>(&text) else { return BTreeMap::new() };
+    entries.into_iter().map(|e| (e.flop.clone(), e)).collect()
+}
+
+fn save_manifest(path: &Path, entries: &BTreeMap<String, ManifestEntry>) {
+    let list: Vec<&ManifestEntry> = entries.values().collect();
+    let json = serde_json::to_string_pretty(&list).expect("manifest entries must serialize");
+    std::fs::write(path, json).unwrap_or_else(|e| panic!("failed to write manifest {path:?}: {e}"));
+}
 
 struct Args {
     scenario_path: PathBuf,
@@ -164,11 +192,17 @@ fn main() {
 
     let scenario_out_dir = out_dir.join(&scenario.scenario_id);
     std::fs::create_dir_all(&scenario_out_dir).expect("failed to create output directory");
+    let manifest_file = manifest_path(&scenario_out_dir);
+    let mut manifest = load_manifest(&manifest_file);
 
     let total = flops.len();
     for (i, flop_str) in flops.iter().enumerate() {
         let out_path = scenario_out_dir.join(format!("{flop_str}.bin"));
-        if args.resume && out_path.exists() {
+        // manifest記載済み(=最終exploitabilityを記録済み)のフロップのみスキップする。
+        // ファイル存在だけで判定すると、古い収束基準で書かれた.binが残っている場合に
+        // 再計算せず古いデータのまま放置してしまう(2026-07-06、500反復バッチが原因不明で
+        // 中断した際に発覚。中断前の古い200反復.binが95件とも残っていたため)。
+        if args.resume && manifest.contains_key(flop_str) {
             println!("[{}/{total}] skip (exists): {flop_str}", i + 1);
             continue;
         }
@@ -184,13 +218,25 @@ fn main() {
         std::fs::write(&out_path, &bytes).unwrap_or_else(|e| panic!("failed to write {out_path:?}: {e}"));
 
         println!(
-            "[{}/{total}] {} / {flop_str}: {} nodes, {} bytes, {:.1}s",
+            "[{}/{total}] {} / {flop_str}: {} nodes, {} bytes, {:.1}s, expl={:.3}% pot",
             i + 1,
             scenario.scenario_id,
             solution.nodes.len(),
             bytes.len(),
-            elapsed.as_secs_f64()
+            elapsed.as_secs_f64(),
+            solution.exploitability_pot_frac * 100.0,
         );
+
+        manifest.insert(
+            flop_str.clone(),
+            ManifestEntry {
+                flop: flop_str.clone(),
+                expl_pot_frac: solution.exploitability_pot_frac,
+                seconds: elapsed.as_secs_f64(),
+                bytes: bytes.len(),
+            },
+        );
+        save_manifest(&manifest_file, &manifest);
 
         if let Some(debug_path) = &args.debug_json {
             write_debug_json(&solution, debug_path).unwrap_or_else(|e| {

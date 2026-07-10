@@ -227,7 +227,7 @@ pub fn solve_turn_subgame(scenario: &Scenario, flop_str: &str, turn_str: &str, o
     game.allocate_memory(true);
 
     let target_expl_chips = scenario.starting_pot_chips as f32 * opts.target_exploitability_pot_frac;
-    solve(&mut game, opts.max_iterations, target_expl_chips, opts.print_progress);
+    let final_expl_chips = solve(&mut game, opts.max_iterations, target_expl_chips, opts.print_progress);
 
     game.back_to_root();
 
@@ -245,6 +245,7 @@ pub fn solve_turn_subgame(scenario: &Scenario, flop_str: &str, turn_str: &str, o
         effective_stack_chips: scenario.effective_stack_chips as u32,
         oop_combos,
         ip_combos,
+        exploitability_pot_frac: final_expl_chips / scenario.starting_pot_chips as f32,
         nodes,
     })
 }
@@ -272,7 +273,7 @@ pub fn solve_scenario_flop(scenario: &Scenario, flop_str: &str, opts: &SolveOpti
     game.allocate_memory(true);
 
     let target_expl_chips = scenario.starting_pot_chips as f32 * opts.target_exploitability_pot_frac;
-    solve(&mut game, opts.max_iterations, target_expl_chips, opts.print_progress);
+    let final_expl_chips = solve(&mut game, opts.max_iterations, target_expl_chips, opts.print_progress);
 
     game.back_to_root();
     game.cache_normalized_weights();
@@ -289,6 +290,7 @@ pub fn solve_scenario_flop(scenario: &Scenario, flop_str: &str, opts: &SolveOpti
         flop_card_ids: flop,
         starting_pot_chips: scenario.starting_pot_chips as u32,
         effective_stack_chips: scenario.effective_stack_chips as u32,
+        exploitability_pot_frac: final_expl_chips / scenario.starting_pot_chips as f32,
         oop_combos,
         ip_combos,
         nodes,

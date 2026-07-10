@@ -20,6 +20,9 @@ pub struct SolutionExport {
     pub oop_combos: Vec<(u8, u8)>,
     pub ip_combos: Vec<(u8, u8)>,
     pub nodes: Vec<NodeExport>,
+    /// solve()が返した最終exploitability(pot比)。.binには含めない
+    /// (FORMAT.mdのバイナリ仕様は変更しない)。manifest.json出力・ログ専用のメタデータ。
+    pub exploitability_pot_frac: f32,
 }
 
 fn push_u8_str(buf: &mut Vec<u8>, s: &str) {
@@ -151,6 +154,7 @@ mod tests {
             effective_stack_chips: 975,
             oop_combos: vec![(0, 1), (2, 3)],
             ip_combos: vec![(4, 5), (6, 7), (8, 9)],
+            exploitability_pot_frac: 0.001,
             nodes: vec![NodeExport {
                 node_id: "".to_string(),
                 player: 0,
