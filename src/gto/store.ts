@@ -31,6 +31,8 @@ export interface GtoState {
   status: GtoStatus
   spot: SpotState | null
   grading: GradeResult | null
+  /** ユーザーが選択したアクションラベル(採点後の表示用)。 */
+  chosenLabel: string | null
   errorMessage: string | null
   sessionTally: SessionTally
 
@@ -43,11 +45,12 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   status: 'idle',
   spot: null,
   grading: null,
+  chosenLabel: null,
   errorMessage: null,
   sessionTally: initialTally(),
 
   startNewSpot: async () => {
-    set({ status: 'loading', grading: null, errorMessage: null })
+    set({ status: 'loading', grading: null, chosenLabel: null, errorMessage: null })
     try {
       const scenario = getScenario(SCENARIO_ID)
       const flop: FlopDef = pickWeightedFlop()
@@ -55,7 +58,7 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       const solution = await loadFlopSolution(SCENARIO_ID, flopId)
       const userSeat: Seat = Math.random() < 0.5 ? 0 : 1
       const spot = createSpot(scenario, flop, solution, userSeat, Math.random)
-      set({ status: 'userTurn', spot, grading: null, errorMessage: null })
+      set({ status: 'userTurn', spot, grading: null, chosenLabel: null, errorMessage: null })
     } catch (e) {
       set({ status: 'error', errorMessage: e instanceof Error ? e.message : String(e) })
     }
@@ -71,7 +74,7 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       marginal: sessionTally.marginal + (grading.verdict === 'marginal' ? 1 : 0),
       totalEvLossBb: sessionTally.totalEvLossBb + Math.max(0, grading.evLossBb),
     }
-    set({ status: 'graded', grading, sessionTally: nextTally })
+    set({ status: 'graded', grading, chosenLabel: label, sessionTally: nextTally })
   },
 
   nextSpot: async () => {

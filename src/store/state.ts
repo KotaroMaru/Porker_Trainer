@@ -79,7 +79,7 @@ export interface SessionStats {
   hintCount: number
 }
 
-export type AppView = 'table' | 'history' | 'study' | 'stats' | 'quiz'
+export type AppView = 'table' | 'history' | 'study' | 'stats' | 'quiz' | 'gto'
 export type BotSpeed = 'fast' | 'normal' | 'slow'
 export type TableSize = 6 | 7 | 8
 

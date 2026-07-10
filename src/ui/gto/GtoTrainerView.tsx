@@ -1,0 +1,52 @@
+import { useState } from 'react'
+import { PlayScreen } from './PlayScreen'
+
+// P4 Step D: サブ画面切替(QuizViewパターン、ローカルuseState管理)。
+// P4は'play'のみ実装。review/bookmarks/settingsはP5/P6で実装するプレースホルダ。
+
+type GtoMode = 'play' | 'review' | 'bookmarks' | 'settings'
+
+const MODE_LABELS: Record<GtoMode, string> = {
+  play: 'プレイ',
+  review: 'レビュー',
+  bookmarks: '保存済み',
+  settings: '設定',
+}
+
+export function GtoTrainerView() {
+  const [mode, setMode] = useState<GtoMode>('play')
+
+  return (
+    <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto', width: '100%' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+        <h2 style={{ color: 'var(--gold)', fontSize: 18, flexShrink: 0 }}>GTO練習</h2>
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 1, paddingBottom: 2 }}>
+          {(['play', 'review', 'bookmarks', 'settings'] as GtoMode[]).map((m) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              style={{
+                background: mode === m ? 'var(--green-mid)' : 'transparent',
+                color: mode === m ? 'var(--gold-light)' : 'var(--text-muted)',
+                padding: '6px 14px',
+                fontSize: 13.5,
+                fontWeight: mode === m ? 600 : 400,
+                border: '1px solid ' + (mode === m ? 'var(--green-light)' : 'var(--panel-border)'),
+                borderRadius: 6,
+              }}
+            >
+              {MODE_LABELS[m]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {mode === 'play' && <PlayScreen />}
+      {mode !== 'play' && (
+        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>
+          {MODE_LABELS[mode]}はまだ実装されていません(今後のフェーズで追加予定)。
+        </div>
+      )}
+    </div>
+  )
+}

@@ -8,6 +8,7 @@ import { HistoryView } from './ui/HistoryView'
 import { StudyView } from './ui/StudyView'
 import { StatsView } from './ui/StatsView'
 import { QuizView } from './ui/QuizView'
+import { GtoTrainerView } from './ui/gto/GtoTrainerView'
 import { TutorialOverlay } from './ui/TutorialOverlay'
 import { BottomNav } from './ui/BottomNav'
 import { SpadeIcon, GearIcon } from './ui/icons'
@@ -227,7 +228,7 @@ export function App() {
 
         {!isMobile && (
           <nav style={{ display: 'flex', gap: 6, marginLeft: 8 }}>
-            {(['table', 'history', 'study', 'stats', 'quiz'] as const).map(v => (
+            {(['table', 'history', 'study', 'stats', 'quiz', 'gto'] as const).map(v => (
               <button
                 key={v}
                 onClick={() => setView(v)}
@@ -240,7 +241,7 @@ export function App() {
                   border: '1px solid ' + (view === v ? 'var(--green-light)' : 'var(--panel-border)'),
                 }}
               >
-                {{ table: 'テーブル', history: '履歴', study: '学習資料', stats: '統計', quiz: '一問一答' }[v]}
+                {{ table: 'テーブル', history: '履歴', study: '学習資料', stats: '統計', quiz: '一問一答', gto: 'GTO練習' }[v]}
               </button>
             ))}
           </nav>
@@ -264,6 +265,7 @@ export function App() {
         {view === 'study' && <StudyView />}
         {view === 'stats' && <StatsView />}
         {view === 'quiz' && <QuizView />}
+        {view === 'gto' && <GtoTrainerView />}
       </main>
 
       {isMobile && <BottomNav />}

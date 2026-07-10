@@ -1,6 +1,6 @@
 import { useAppStore } from '../store/state'
 import type { AppView } from '../store/state'
-import { SpadeIcon, ListIcon, BookIcon, BarChartIcon, HelpCircleIcon } from './icons'
+import { SpadeIcon, ListIcon, BookIcon, BarChartIcon, HelpCircleIcon, TargetIcon } from './icons'
 
 const TABS: { view: AppView; label: string; Icon: React.ComponentType<{ size?: number }> }[] = [
   { view: 'table',   label: 'テーブル', Icon: SpadeIcon },
@@ -8,6 +8,7 @@ const TABS: { view: AppView; label: string; Icon: React.ComponentType<{ size?: n
   { view: 'study',   label: '学習',     Icon: BookIcon },
   { view: 'stats',   label: '統計',     Icon: BarChartIcon },
   { view: 'quiz',    label: '一問一答', Icon: HelpCircleIcon },
+  { view: 'gto',     label: 'GTO練習',  Icon: TargetIcon },
 ]
 
 export function BottomNav() {

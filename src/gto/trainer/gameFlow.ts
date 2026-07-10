@@ -45,7 +45,7 @@ export interface SpotState {
   actionsWithAmounts: { label: string; amountBb: number }[]
 }
 
-function boardFromFlop(flop: FlopDef): Card[] {
+export function boardFromFlop(flop: FlopDef): Card[] {
   return flop.cards.map((key) => {
     const rankStr = key.slice(0, -1)
     const suit = key.slice(-1) as Card['suit']
