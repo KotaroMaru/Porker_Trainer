@@ -52,6 +52,14 @@ export interface DecisionNode {
   player: PlayerIdx
   actionLabels: string[]
   children: TreeNode[] // actionLabelsと同じ順序・同じ長さ
+  /**
+   * この決断時点でのポット(bb、このストリート開始時点のポット込み)。UI表示用
+   * (bb換算額の算出等)。actionTree.tsが構築する木では必ず設定される。トイゲーム
+   * (Kuhnポーカー等、bb建てのベッティング抽象を使わない検証用ゲーム)では省略可。
+   */
+  potBb?: number
+  /** この決断時点までに各プレイヤーがこのストリートで投入済みの額(bb)。UI表示用。同上、省略可。 */
+  contributedBb?: [number, number]
 }
 
 export interface ChanceNode {

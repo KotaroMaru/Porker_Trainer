@@ -1,11 +1,13 @@
 import type { Position } from '../../engine/types'
 import type { Scenario } from '../types'
 
-const STARTING_STACK_BB = 100
-const OPEN_SIZE_BB: Record<Position, number> = {
+export const STARTING_STACK_BB = 100
+// プリフロップのオープン/3ベットサイズ(ポジション別)。trainer/preflopScript.tsが
+// プリフロップ履歴の表示行を再構成する際にも使う唯一の正典。
+export const OPEN_SIZE_BB: Record<Position, number> = {
   UTG: 2.5, 'UTG+1': 2.5, MP: 2.5, HJ: 2.5, CO: 2.5, BTN: 2.5, SB: 3, BB: 2.5,
 }
-const THREEBET_SIZE_BB: Record<Position, number> = {
+export const THREEBET_SIZE_BB: Record<Position, number> = {
   UTG: 7.5, 'UTG+1': 7.5, MP: 7.5, HJ: 7.5, CO: 7.5, BTN: 7.5, SB: 11, BB: 12,
 }
 
@@ -112,6 +114,17 @@ const THREEBET_POTS: Scenario[] = [
   threebetScenario({ id: '3bet_hj_vs_btn', raiser: 'HJ', threebettor: 'BTN', raiserRangeId: 'defend_call_hj_vs_btn3bet', threebettorRangeId: 'threebet_btn_vs_hj', weight: 6 }),
   threebetScenario({ id: '3bet_utg_vs_btn', raiser: 'UTG', threebettor: 'BTN', raiserRangeId: 'defend_call_utg_vs_btn3bet', threebettorRangeId: 'threebet_btn_vs_utg', weight: 5 }),
 ]
+
+// ポストフロップの実際の行動順(早い方がOOP)。raiser/defenderの役割とは独立
+// (例: BTNがオープンしてSBが3ベット・コールでも、ポストフロップはSBが先手=OOP)。
+// tools/gen-solver-scenarios.mjsとtrainer層(src/gto/trainer/)の両方がこれを使う
+// (重複ロジックを避けるため、ここが唯一の正典)。
+const POSTFLOP_ORDER: Position[] = ['SB', 'BB', 'UTG', 'HJ', 'CO', 'BTN']
+
+/** aがbよりポストフロップで先手(OOP)かどうか。 */
+export function isOopPosition(a: Position, b: Position): boolean {
+  return POSTFLOP_ORDER.indexOf(a) < POSTFLOP_ORDER.indexOf(b)
+}
 
 export const SCENARIOS: Scenario[] = [...SRP_VS_BB, ...SRP_COLD_CALL, ...THREEBET_POTS]
 

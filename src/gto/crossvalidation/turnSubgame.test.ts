@@ -3,8 +3,8 @@ import fixtureJson from '../../../tools/solver/crossvalidation/turn_subgame_srp_
 import { solveCfr } from '../solver/cfr'
 import { scoreComboOnBoard } from '../solver/handEval'
 import { buildTurnSubgameTree } from '../tree/actionTree'
-import { getRange } from '../data/ranges'
-import { expandHandStr } from '../../analysis/range'
+import { expandWeightedRange } from '../trainer/weightedRange'
+import { buildComboIndexMap, lookupComboIndex } from '../trainer/comboIndex'
 import { cardKey } from '../../engine/deck'
 import type { Card } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
@@ -20,6 +20,9 @@ import type { CfrGame, DecisionNode } from '../solver/cfr'
 //
 // プリフロップレンジは両実装とも生のシナリオレンジをそのまま使う
 // (narrowRangeByActionはヨコサワ系ヒューリスティックのため突合には使わない)。
+//
+// コンボ変換(rustIdFromCard等)とレンジ展開(expandWeightedRange)はP4 Step1で
+// src/gto/trainer/へ昇格し、trainer層と共通化した。
 
 interface RustNode {
   nodeId: string
@@ -37,33 +40,6 @@ interface RustFixture {
   oopCombos: [number, number][] // rust card_id pairs
   ipCombos: [number, number][]
   nodes: RustNode[]
-}
-
-const RUST_SUITS = ['c', 'd', 'h', 's'] as const
-function rustIdFromCard(card: Card): number {
-  const suitIndex = RUST_SUITS.indexOf(card.suit)
-  return 4 * (card.rank - 2) + suitIndex
-}
-function comboRustKey(combo: Combo): string {
-  const [a, b] = [rustIdFromCard(combo[0]), rustIdFromCard(combo[1])].sort((x, y) => x - y)
-  return `${a},${b}`
-}
-
-/** FreqRangeを(ボードと衝突しないコンボ, 頻度)の対応に展開する(重み付き)。 */
-function expandWeightedRange(rangeId: string, board: Card[]): { combos: Combo[]; weights: number[] } {
-  const range = getRange(rangeId)
-  const deadSet = new Set(board.map(cardKey))
-  const combos: Combo[] = []
-  const weights: number[] = []
-  for (const [handStr, freq] of Object.entries(range)) {
-    if (freq <= 0) continue
-    for (const combo of expandHandStr(handStr)) {
-      if (deadSet.has(cardKey(combo[0])) || deadSet.has(cardKey(combo[1]))) continue
-      combos.push(combo)
-      weights.push(freq)
-    }
-  }
-  return { combos, weights }
 }
 
 function comboCards(combo: Combo): string[] {
@@ -139,13 +115,8 @@ describe('P3 Step5: Rust(postflop-solver)↔TS CFRソルバーの突合(BTN vs B
     // 均衡におけるゲーム値(期待値)は一意に定まるため、これが両実装の
     // 正しさを検証する頑健な不変量になる(reachの取り方はP1で確立済みの
     // conditionalGameValueと同じ考え方: 手ごとのEVをreachで加重平均)。
-    const rustComboIndex = new Map<string, number>()
-    fixture.oopCombos.forEach((pair, i) => rustComboIndex.set(`${pair[0]},${pair[1]}`, i))
-    const tsToRustIdx: number[] = oopCombos.map((c) => {
-      const idx = rustComboIndex.get(comboRustKey(c))
-      if (idx === undefined) throw new Error(`combo not found in rust fixture: ${comboCards(c).join('')}`)
-      return idx
-    })
+    const rustComboIndex = buildComboIndexMap(fixture.oopCombos)
+    const tsToRustIdx: number[] = oopCombos.map((c) => lookupComboIndex(rustComboIndex, c))
 
     // Rust側のgameValue(OOP)を、ルートノードのfreq×evBbからreach加重平均で再構成する
     // (postflop-solverのexpected_values()と同じ式: Σ freq[a]*evDetail[a] を手ごとに

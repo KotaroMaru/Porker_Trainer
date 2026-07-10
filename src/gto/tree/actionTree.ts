@@ -115,7 +115,7 @@ export function buildStreetTree(opts: ActionTreeOptions): TreeNode {
       }
     }
 
-    return { kind: 'decision', player: actor, actionLabels, children }
+    return { kind: 'decision', player: actor, actionLabels, children, potBb: state.potBb, contributedBb: [...state.contributed] }
   }
 
   /**
@@ -190,7 +190,7 @@ export function buildStreetTree(opts: ActionTreeOptions): TreeNode {
       }
     }
 
-    return { kind: 'decision', player: other, actionLabels, children }
+    return { kind: 'decision', player: other, actionLabels, children, potBb: newState.potBb, contributedBb: [...newState.contributed] }
   }
 
   return buildOpenDecision(initialState, opts.firstToAct, true)
