@@ -28,15 +28,43 @@ export function ResponseRangePanel({ responses, chosenLabel, bestLabel }: Props)
             <div style={{ color: 'var(--text-dim)' }}>この選択で決断は終了します(相手の追加アクションなし)。</div>
           ) : (
             <>
-              <div style={{ display: 'flex', height: 16, borderRadius: 4, overflow: 'hidden', border: '1px solid var(--panel-border)' }}>
+              {/* P7-4: StrategyMixBarと同じパターン(高さ22px+幅が十分なセグメントには内部に%を表示)。
+                  ホバーtooltipだけでなく常時数値が見えるようにする。 */}
+              <div style={{ display: 'flex', height: 22, borderRadius: 4, overflow: 'hidden', border: '1px solid var(--panel-border)' }}>
                 {r.breakdown
                   .filter((b) => b.freq > 0.001)
                   .map((b) => (
                     <div
                       key={b.label}
                       title={`${actionLabelJa(b.label)} ${(b.freq * 100).toFixed(0)}%`}
-                      style={{ width: `${b.freq * 100}%`, background: actionColor(b.label) }}
-                    />
+                      style={{
+                        width: `${b.freq * 100}%`,
+                        background: actionColor(b.label),
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: 9,
+                        color: '#fff',
+                        fontWeight: 600,
+                        overflow: 'hidden',
+                        whiteSpace: 'nowrap',
+                      }}
+                    >
+                      {b.freq > 0.12 ? `${(b.freq * 100).toFixed(0)}%` : ''}
+                    </div>
+                  ))}
+              </div>
+              {/* 帯の下に全セグメントの凡例(アクション名+頻度%)を常時表示する。 */}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4, fontSize: 10.5 }}>
+                {r.breakdown
+                  .filter((b) => b.freq > 0.001)
+                  .map((b) => (
+                    <div key={b.label} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: 2, background: actionColor(b.label), display: 'inline-block' }} />
+                      <span style={{ color: 'var(--text-muted)' }}>
+                        {actionLabelJa(b.label)} {(b.freq * 100).toFixed(0)}%
+                      </span>
+                    </div>
                   ))}
               </div>
               <div style={{ marginTop: 3, color: 'var(--text-muted)' }}>

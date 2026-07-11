@@ -32,4 +32,14 @@ describe('ResponseRangePanel', () => {
     expect(container.textContent).toContain('★ ベット 33%')
     expect(screen.getByText('(あなたの選択)')).toBeInTheDocument()
   })
+
+  it('P7-4: 帯の下にホバー無しでも全セグメントの頻度%が常時表示される', () => {
+    render(<ResponseRangePanel responses={responses} chosenLabel="check" bestLabel="bet33" />)
+    // 'check'応答のbreakdown(check 60% / bet33 40%)が凡例テキストとして表示される。
+    expect(screen.getByText('チェック 60%')).toBeInTheDocument()
+    expect(screen.getByText('ベット 33% 40%')).toBeInTheDocument()
+    // 'bet33'応答のbreakdown(fold 30% / call 70%)も同様。
+    expect(screen.getByText('フォールド 30%')).toBeInTheDocument()
+    expect(screen.getByText('コール 70%')).toBeInTheDocument()
+  })
 })
