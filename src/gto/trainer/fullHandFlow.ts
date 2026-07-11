@@ -77,6 +77,16 @@ export interface FullHandSnapshot {
   actionsWithAmounts: { label: string; amountBb: number }[]
   history: HistoryEntry[]
   result: HandResult | null
+
+  // 以下はハンド全体で不変(構築時に確定)。毎emitで同じ値を含めることで、
+  // UI層(PlayScreen等)がFullHandSnapshotだけを見ればプレイ画面を組み立てられるようにする
+  // (gameFlow.tsのSpotStateがscenario/flop/userComboを直接持つのと同じ設計方針)。
+  scenario: Scenario
+  flop: FlopDef
+  userSeat: Seat
+  userCombo: Combo
+  userPosition: string
+  botPosition: string
 }
 
 export interface FullHandControllerDeps {
@@ -218,6 +228,12 @@ export class FullHandController {
       actionsWithAmounts: this.phase === 'userTurn' && this.curNode.kind === 'decision' ? actionLabelsWithAmounts(this.curNode) : [],
       history: this.history,
       result: this.result,
+      scenario: this.deps.scenario,
+      flop: this.deps.flop,
+      userSeat: this.userSeat,
+      userCombo: this.userCombo,
+      userPosition: this.positionOf(this.userSeat),
+      botPosition: this.positionOf(this.botSeat),
     })
   }
 
@@ -549,19 +565,13 @@ export class FullHandController {
 
   getReview(): ReviewData {
     if (!this.result) throw new Error('getReview: hand is not over yet')
-    const oopIsRaiser = isOopPosition(this.deps.scenario.raiser.position, this.deps.scenario.defender.position)
-    const oopPosition = oopIsRaiser ? this.deps.scenario.raiser.position : this.deps.scenario.defender.position
-    const ipPosition = oopIsRaiser ? this.deps.scenario.defender.position : this.deps.scenario.raiser.position
-    const userPosition = this.userSeat === 0 ? oopPosition : ipPosition
-    const botPosition = this.userSeat === 0 ? ipPosition : oopPosition
-
     return {
       scenario: this.deps.scenario,
       flop: this.deps.flop,
       board: this.result.finalBoard,
       userCombo: this.userCombo,
-      userPosition,
-      botPosition,
+      userPosition: this.positionOf(this.userSeat),
+      botPosition: this.positionOf(this.botSeat),
       history: this.history,
       decisions: this.decisions,
     }
