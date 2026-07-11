@@ -167,11 +167,15 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
   })
 
   it('marginal/incorrect時は比較段落が追加される', () => {
+    // marginalはevLossBb=0.3/potBb=10=3%(収束誤差の許容内)のため、P7-5で追加した
+    // 混合戦略注記(buildMixedStrategyNote)も加わり4段落になる。incorrectはevLossBb比率
+    // 15%で許容外のため注記は付かず3段落のまま。
+    const expected: Record<'marginal' | 'incorrect', number> = { marginal: 4, incorrect: 3 }
     for (const verdict of ['marginal', 'incorrect'] as const) {
       const decision = buildSyntheticDecision('root', verdict)
       const features = buildSyntheticFeatures('root', 'MIDDLE')
       const explanation = buildExplanation(decision, features)
-      expect(explanation.paragraphs.length).toBe(3)
+      expect(explanation.paragraphs.length).toBe(expected[verdict])
     }
   })
 })

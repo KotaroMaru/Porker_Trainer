@@ -160,6 +160,8 @@ export function ReviewScreen() {
             ))}
           </tbody>
         </table>
+        {/* P7-5: ★はEV最大手を指す(採点=頻度基準とは別の軸)ことをEV表の直下でも明示する。 */}
+        <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>★ = このソルブでの最高EVのアクション</div>
       </div>
 
       {/* 5. 「なぜ」解説カード(金枠=画面の主役) */}

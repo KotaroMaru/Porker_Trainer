@@ -10,6 +10,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { ReviewScreen } from './ReviewScreen'
 import { useGtoStore, initialTally } from '../../gto/store'
 import { __resetSolutionCacheForTests } from '../../gto/loader/solutionLoader'
+import { VERDICT_LABEL } from './labels'
 import type { Card } from '../../engine/types'
 
 const originalFetch = globalThis.fetch
@@ -69,8 +70,9 @@ describe('ReviewScreen', () => {
     ]
     expect(screen.getAllByText(new RegExp(chosenJa!)).length).toBeGreaterThan(0)
 
-    // ② 判定バッジ
-    expect(screen.getByText(/正解|不正解|境界上/)).toBeInTheDocument()
+    // ② 判定バッジ(厳密一致でスコープを絞る。解説headlineにも「正解」等の部分文字列が
+    // 含まれうるため、正規表現の部分一致だと複数要素にマッチしてしまう)
+    expect(screen.getByText(VERDICT_LABEL[state.grading!.verdict])).toBeInTheDocument()
 
     // ③ ボード+ハンド1行
     expect(screen.getByText('ボード')).toBeInTheDocument()
@@ -81,10 +83,10 @@ describe('ReviewScreen', () => {
     expect(screen.getByText('EV')).toBeInTheDocument()
 
     // ⑤ 「なぜ」解説カード(computing→readyを待っているのでheadlineが出ているはず)
-    // headline文言(buildHeadline)は「が最善」または「境界上の手」を必ず含み、
+    // headline文言(buildHeadline)は「GTO正解」「が最善」「境界上の手」のいずれかを必ず含み、
     // かつナビゲータ/ステッパーの短いラベルには出現しないため一意に識別できる。
     await waitFor(() => {
-      expect(screen.getByText(/が最善|境界上の手/)).toBeInTheDocument()
+      expect(screen.getByText(/GTO正解|が最善|境界上の手/)).toBeInTheDocument()
     })
 
     // ⑥ レンジグリッド(169セル)
@@ -116,10 +118,10 @@ describe('ReviewScreen', () => {
     Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
 
     render(<ReviewScreen />)
-    // headline文言(buildHeadline)は「が最善」または「境界上の手」を必ず含み、
+    // headline文言(buildHeadline)は「GTO正解」「が最善」「境界上の手」のいずれかを必ず含み、
     // かつナビゲータ/ステッパーの短いラベルには出現しないため一意に識別できる。
     await waitFor(() => {
-      expect(screen.getByText(/が最善|境界上の手/)).toBeInTheDocument()
+      expect(screen.getByText(/GTO正解|が最善|境界上の手/)).toBeInTheDocument()
     })
 
     screen.getByText('AIに質問用コピー').click()

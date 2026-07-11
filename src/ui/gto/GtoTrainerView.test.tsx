@@ -113,7 +113,7 @@ describe('GtoTrainerView (実.binフィクスチャによる結合テスト, P6 
 
     // 自動的に「プレイ」タブへ遷移し、ReviewScreenの内容(判定・解説)が描画される
     await waitFor(() => {
-      expect(screen.getByText(/が最善|境界上の手/)).toBeInTheDocument()
+      expect(screen.getByText(/GTO正解|が最善|境界上の手/)).toBeInTheDocument()
     })
     expect(screen.getByText('ボード')).toBeInTheDocument()
     expect(screen.getByText('一覧へ戻る')).toBeInTheDocument()

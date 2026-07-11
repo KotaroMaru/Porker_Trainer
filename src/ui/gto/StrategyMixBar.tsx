@@ -70,6 +70,9 @@ export function StrategyMixBar({ breakdown, bestLabel, chosenLabel }: Props) {
           </div>
         ))}
       </div>
+      {/* P7-5: ★は「頻度ベースの正解」ではなく「このソルブでの最高EV」を指すことを明示する
+          (採点=頻度基準、★=EV基準、で別の軸であることが伝わらず混乱を招いていたため)。 */}
+      <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>★ = このソルブでの最高EVのアクション</div>
     </div>
   )
 }

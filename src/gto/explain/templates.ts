@@ -70,12 +70,36 @@ function buildHeadline(decision: ReviewDecision): string {
   const chosenFreq = findAction(decision, decision.chosenLabel)?.freq
 
   if (grading.verdict === 'correct') {
-    return `○ ${actionJa(decision.chosenLabel)}が最善(頻度${pctFrac(chosenFreq)}・EV${bb(grading.chosenEvBb)})`
+    // P7-5: 採点(grading.ts)は頻度ベース(GTOがどれだけ混ぜるか)であり、EV最大手★とは
+    // 別の基準。「が最善」と書くとEV最大手(★)と矛盾するように見えるため、採点基準を
+    // 明示する「GTO正解」に言い換える。EV最大手との関係は必要な場合のみ
+    // buildMixedStrategyNoteで別途補足する。
+    return `○ ${actionJa(decision.chosenLabel)}はGTO正解(頻度${pctFrac(chosenFreq)})`
   }
   if (grading.verdict === 'marginal') {
     return `△ ${actionJa(decision.chosenLabel)}は境界上の手(頻度${pctFrac(chosenFreq)}・EVロス${bb(grading.evLossBb)})。${actionJa(grading.bestLabel)}も有力`
   }
   return `✕ ${actionJa(grading.bestLabel)}が最善(頻度${pctFrac(bestFreq)}・EV${bb(grading.bestEvBb)})。${actionJa(decision.chosenLabel)}はEVロス${bb(grading.evLossBb)}`
+}
+
+/**
+ * 選んだ手がGTO正解/境界上の手だが、EV表の★(最高EVのアクション)とは異なる場合に、
+ * 「なぜ食い違って見えるか」を補足する注記を返す(P7-5)。EV差が大きい場合
+ * (収束誤差では説明しにくい)は補足しない — 本当にEVが劣る可能性があるため。
+ * 閾値はP3で確認済みの収束ノイズの目安(このボードのポットに対する数%)に合わせている。
+ */
+const MIXED_STRATEGY_EV_TOLERANCE_FRAC = 0.05
+
+function buildMixedStrategyNote(decision: ReviewDecision): string | null {
+  const { grading } = decision
+  if (grading.verdict !== 'correct' && grading.verdict !== 'marginal') return null
+  if (decision.chosenLabel === grading.bestLabel) return null
+  const potRef = decision.potBbAtDecision > 0 ? decision.potBbAtDecision : 1
+  if (grading.evLossBb / potRef > MIXED_STRATEGY_EV_TOLERANCE_FRAC) return null
+  return (
+    `GTOはこの手で${actionJa(decision.chosenLabel)}と${actionJa(grading.bestLabel)}を混ぜます。均衡では混合されるアクションのEVは` +
+    `ほぼ等しく、表示上の差(${bb(grading.evLossBb)})はソルバーの収束誤差の範囲内です。`
+  )
 }
 
 function buildHandParagraph(features: SpotFeatures): string {
@@ -164,6 +188,8 @@ export function buildExplanation(decision: ReviewDecision, features: SpotFeature
   const paragraphs: string[] = [buildHandParagraph(features), buildReasonParagraph(decision, features)]
   const comparison = buildComparisonParagraph(decision, features)
   if (comparison) paragraphs.push(comparison)
+  const mixedNote = buildMixedStrategyNote(decision)
+  if (mixedNote) paragraphs.push(mixedNote)
   const sameClassLine = buildSameClassLine(features)
 
   return { headline, paragraphs, sameClassLine }
