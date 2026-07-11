@@ -22,6 +22,31 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // P6 Step B11: GTO解データ(public/gto/solutions/)はビルド成果物ではなくバッチ生成
+        // (tools/solver/precompute)が出力する大量の.binファイルなのでglobPatternsの対象に
+        // 含めず、実行時キャッシュで扱う。.binは一度取得すれば内容が変わらない(フロップ+
+        // シナリオで一意)のでCacheFirst。manifest.jsonはバッチ生成の進捗(--resumeで
+        // 追記され続ける)を反映する必要があるため、CacheFirstだと進捗が最大30日固まって
+        // しまう — StaleWhileRevalidateで都度リクエストしつつ即座にキャッシュ内容も返す。
+        runtimeCaching: [
+          {
+            urlPattern: /\/gto\/solutions\/.*\.bin$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'gto-solutions',
+              expiration: { maxEntries: 300, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+          {
+            urlPattern: /\/gto\/solutions\/.*\/manifest\.json$/,
+            handler: 'StaleWhileRevalidate',
+            options: {
+              cacheName: 'gto-manifests',
+              expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 },
+            },
+          },
+        ],
       },
     }),
   ],
