@@ -7,24 +7,36 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { useGtoStore, initialTally, __setProviderFactoryForTests, __resetProviderFactoryForTests } from './store'
+import {
+  useGtoStore,
+  initialTally,
+  __setProviderFactoryForTests,
+  __resetProviderFactoryForTests,
+  selectScenarioPool,
+  selectFlopPool,
+  __resetAvailabilityInflightForTests,
+} from './store'
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
+import { SCENARIOS } from './data/scenarios'
+import { FLOPS } from './data/flops'
 
 const originalFetch = globalThis.fetch
 
+const binFetchStub = (async (input: RequestInfo | URL) => {
+  const url = typeof input === 'string' ? input : input.toString()
+  const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
+  if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
+  const [, scenarioId, flopId] = match
+  const filePath = join(process.cwd(), 'public/gto/solutions', scenarioId, `${flopId}.bin`)
+  const buf = await readFile(filePath)
+  const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  return new Response(arrayBuf, { status: 200 })
+}) as typeof fetch
+
 beforeAll(() => {
-  globalThis.fetch = (async (input: RequestInfo | URL) => {
-    const url = typeof input === 'string' ? input : input.toString()
-    const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
-    if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
-    const [, scenarioId, flopId] = match
-    const filePath = join(process.cwd(), 'public/gto/solutions', scenarioId, `${flopId}.bin`)
-    const buf = await readFile(filePath)
-    const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
-    return new Response(arrayBuf, { status: 200 })
-  }) as typeof fetch
+  globalThis.fetch = binFetchStub
 })
 
 afterAll(() => {
@@ -383,5 +395,116 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(state.spot).not.toBeNull()
     expect(state.fullHand).toBeNull()
     expect(state.fullHandController).toBeNull()
+  })
+
+  it('setModeは古いstatus/spotを残さず、新モードでスポットを取り直す(空白画面バグの回帰テスト)', async () => {
+    // 単発モードで採点済み(status:'graded')の状態を作り、そのまま通しモードへ切り替える。
+    // setMode内でstartNewSpot()を呼ばないと、statusが'graded'のまま残りFullHandPlayScreenの
+    // どのブランチにも一致せず空白画面になっていた(実際にブラウザで確認したバグ)。
+    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    expect(useGtoStore.getState().status).toBe('graded')
+
+    useGtoStore.getState().setMode('full')
+    await waitForStorePause()
+
+    const state = useGtoStore.getState()
+    expect(['userTurn', 'handOver']).toContain(state.status)
+    expect(state.spot).toBeNull()
+    expect(state.fullHand).not.toBeNull()
+    expect(state.fullHandController).not.toBeNull()
+  }, 30_000)
+
+  it('setModeは実際にモードが変わらない場合は何もしない(不要な再スタートを避ける)', () => {
+    useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [] }, status: 'userTurn' })
+    const before = useGtoStore.getState()
+    useGtoStore.getState().setMode('full')
+    const after = useGtoStore.getState()
+    expect(after.status).toBe('userTurn')
+    expect(after.fullHandController).toBe(before.fullHandController) // startNewSpotが呼ばれていれば別インスタンスに変わるはず
+  })
+})
+
+describe('selectScenarioPool (P6 B9)', () => {
+  it('有効化+出題可能な組み合わせのシナリオのみを返す', () => {
+    const playable = new Set(['srp_btn_vs_bb', 'srp_co_vs_bb'])
+    const pool = selectScenarioPool(SCENARIOS, ['srp_btn_vs_bb'], playable)
+    expect(pool.map((s) => s.id)).toEqual(['srp_btn_vs_bb'])
+  })
+
+  it('設定で無効化されたシナリオは、出題可能でも選ばれない', () => {
+    const playable = new Set(['srp_btn_vs_bb', 'srp_co_vs_bb'])
+    const pool = selectScenarioPool(SCENARIOS, ['srp_co_vs_bb'], playable)
+    expect(pool.map((s) => s.id)).toEqual(['srp_co_vs_bb'])
+  })
+
+  it('有効化+出題可能の組み合わせが空なら、出題可能な全体へフォールバックする', () => {
+    const playable = new Set(['srp_co_vs_bb']) // srp_co_vs_bbのみ生成済みだが設定では無効化されている
+    const pool = selectScenarioPool(SCENARIOS, ['srp_btn_vs_bb'], playable) // srp_btn_vs_bbは未生成
+    expect(pool.map((s) => s.id)).toEqual(['srp_co_vs_bb'])
+  })
+
+  it('出題可能なシナリオが1つも無ければFALLBACK_SCENARIO_ID(srp_btn_vs_bb)のみへフォールバックする', () => {
+    const pool = selectScenarioPool(SCENARIOS, [], new Set())
+    expect(pool.map((s) => s.id)).toEqual(['srp_btn_vs_bb'])
+  })
+})
+
+describe('selectFlopPool (P6 B9)', () => {
+  it('生成済みフロップIDのみに絞り込む', () => {
+    const someFlopId = FLOPS[0].cards.join('')
+    const pool = selectFlopPool(FLOPS, [someFlopId])
+    expect(pool.length).toBe(1)
+    expect(pool[0].cards.join('')).toBe(someFlopId)
+  })
+
+  it('availableFlopIdsがundefined(availability未取得、またはそのシナリオがavailabilityに無い)ならFLOPS全体を返す', () => {
+    const pool = selectFlopPool(FLOPS, undefined)
+    expect(pool.length).toBe(FLOPS.length)
+  })
+
+  it('絞り込み結果が空(該当フロップが実在しない)ならFLOPS全体へフォールバックする', () => {
+    const pool = selectFlopPool(FLOPS, ['nonexistent-flop-id'])
+    expect(pool.length).toBe(FLOPS.length)
+  })
+})
+
+describe('loadAvailability (P6 B9)', () => {
+  beforeEach(() => {
+    __resetAvailabilityInflightForTests()
+    useGtoStore.setState({ availability: null })
+  })
+
+  afterEach(() => {
+    globalThis.fetch = binFetchStub // このdescribe内でglobalThis.fetchを差し替えるため、ファイル共通の.binスタブへ戻す
+  })
+
+  it('manifest.jsonを取得してavailabilityへセットし、同時に複数回呼んでもfetchは1シナリオにつき1回だけ発生する', async () => {
+    let manifestFetchCount = 0
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      if (!url.endsWith('manifest.json')) throw new Error(`unexpected fetch url in test stub: ${url}`)
+      manifestFetchCount++
+      if (url.includes('/srp_btn_vs_bb/')) {
+        const filePath = join(process.cwd(), 'public/gto/solutions/srp_btn_vs_bb/manifest.json')
+        const buf = await readFile(filePath, 'utf8')
+        return new Response(buf, { status: 200 })
+      }
+      return new Response('not found', { status: 404 })
+    }) as typeof fetch
+
+    await Promise.all([useGtoStore.getState().loadAvailability(), useGtoStore.getState().loadAvailability()])
+
+    const availability = useGtoStore.getState().availability
+    expect(availability).not.toBeNull()
+    expect(availability!.get('srp_btn_vs_bb')?.length).toBe(95)
+    expect(manifestFetchCount).toBe(SCENARIOS.length) // 2回目のloadAvailability()は同時実行中のPromiseを再利用し、追加fetchしない
+
+    // 既にロード済みの状態でもう一度呼んでも、追加fetchは発生しない。
+    await useGtoStore.getState().loadAvailability()
+    expect(manifestFetchCount).toBe(SCENARIOS.length)
   })
 })

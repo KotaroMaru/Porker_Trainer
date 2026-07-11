@@ -2,8 +2,9 @@
 // 密結合)とは分離する(マスタープラン「状態管理・UI骨子」参照)。
 //
 // P4スコープ: フロップ単発モードのみ(シナリオはsrp_btn_vs_bb固定)。
-// TODO(P9): 全17マッチアップの解データが揃ったらpickWeightedScenario()+設定の
-// 有効シナリオ絞り込みに切り替える(availability.ts、B9で実装予定)。
+// P6 Step B9: availability.ts(manifest.json自動検出)+設定の有効シナリオ絞り込みで
+// pickWeightedScenario()/pickWeightedFlop()に切り替え済み(下記selectScenarioPool/
+// selectFlopPool参照)。バッチ生成が進むにつれ自動的に出題対象が広がる。
 //
 // P5 Step B6: レビュー画面(ReviewScreen)向けにreview/reviewFeaturesを追加。
 // buildReview(同期・軽量)はchooseAction内で即座に実行するが、computeSpotFeatures
@@ -19,9 +20,10 @@
 // モードを意識しなくてよい)。
 
 import { create } from 'zustand'
-import { getScenario } from './data/scenarios'
-import { pickWeightedFlop } from './data/flops'
+import { pickWeightedScenario, SCENARIOS } from './data/scenarios'
+import { pickWeightedFlop, FLOPS } from './data/flops'
 import { loadFlopSolution } from './loader/solutionLoader'
+import { detectAvailability, playableScenarioIds } from './loader/availability'
 import { createSpot, applyUserAction, type SpotState, type Seat } from './trainer/gameFlow'
 import { buildReview, type ReviewData } from './trainer/reviewBuilder'
 import { computeSpotFeatures, type SpotFeatures } from './explain/features'
@@ -30,9 +32,29 @@ import { createWorkerProviderFactory } from './worker/workerProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
 import { loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from './settings'
 import type { GradeResult } from './trainer/grading'
-import type { FlopDef } from './types'
+import type { Scenario, FlopDef } from './types'
 
-const SCENARIO_ID = 'srp_btn_vs_bb' // TODO(P9): 重み抽選+設定の有効シナリオ絞り込みに切り替える
+/** availability未ロード・生成済みシナリオが1つも無い場合の最終フォールバック。 */
+const FALLBACK_SCENARIO_ID = 'srp_btn_vs_bb'
+
+/**
+ * 出題対象シナリオの絞り込み(設定で有効化されている、かつMIN_FLOPS_FOR_PLAY以上生成済み)。
+ * 空になる場合は段階的にフォールバックする: (1)出題可能な全シナリオ→(2)FALLBACK_SCENARIO_IDのみ。
+ * 純粋関数として切り出し、startNewSpot本体を経由せず直接テストできるようにしている。
+ */
+export function selectScenarioPool(scenarios: readonly Scenario[], enabledScenarioIds: readonly string[], playable: ReadonlySet<string>): Scenario[] {
+  let pool = scenarios.filter((s) => enabledScenarioIds.includes(s.id) && playable.has(s.id))
+  if (pool.length === 0) pool = scenarios.filter((s) => playable.has(s.id))
+  if (pool.length === 0) pool = scenarios.filter((s) => s.id === FALLBACK_SCENARIO_ID)
+  return pool
+}
+
+/** シナリオの生成済みフロップ一覧でFLOPSを絞り込む。未取得(undefined)・絞り込み結果が空ならFLOPS全体を返す。 */
+export function selectFlopPool(flops: readonly FlopDef[], availableFlopIds: readonly string[] | undefined): FlopDef[] {
+  if (!availableFlopIds) return [...flops]
+  const filtered = flops.filter((f) => availableFlopIds.includes(f.cards.join('')))
+  return filtered.length > 0 ? filtered : [...flops]
+}
 
 export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | 'botThinking' | 'handOver'
 export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
@@ -66,6 +88,13 @@ export function __resetProviderFactoryForTests(): void {
   providerFactoryCreator = createWorkerProviderFactory
 }
 
+// GtoTrainerViewマウント時のloadAvailability()とstartNewSpot()内の呼び出しが
+// ほぼ同時に発生しうるため、同時呼び出しを1回のdetectAvailabilityへ重複排除する。
+let availabilityInflight: Promise<Map<string, string[]>> | null = null
+export function __resetAvailabilityInflightForTests(): void {
+  availabilityInflight = null
+}
+
 export interface GtoState {
   status: GtoStatus
   spot: SpotState | null
@@ -78,6 +107,11 @@ export interface GtoState {
   settings: GtoSettings
   setMode: (mode: GtoMode) => void
   setScenarioEnabled: (id: string, enabled: boolean) => void
+
+  /** シナリオID→生成済みフロップID配列。未ロードの間はnull(GTOタブ初回マウントでloadAvailability()を呼ぶ想定)。 */
+  availability: Map<string, string[]> | null
+  /** 未ロードなら1回だけdetectAvailabilityを実行してキャッシュする(セッション内メモリ保持、多重ロード防止)。 */
+  loadAvailability: () => Promise<void>
 
   /** 通しモードの現在ハンドのスナップショット。単発モードでは常にnull。 */
   fullHand: FullHandSnapshot | null
@@ -117,9 +151,15 @@ export const useGtoStore = create<GtoState>((set, get) => ({
 
   settings: loadGtoSettings(),
   setMode: (mode: GtoMode) => {
-    const next: GtoSettings = { ...get().settings, mode }
+    const { settings } = get()
+    if (settings.mode === mode) return
+    const next: GtoSettings = { ...settings, mode }
     saveGtoSettings(next)
     set({ settings: next })
+    // モード切替時は進行中のスポット/ハンドの状態(statusやspot/fullHand)が新モードの
+    // 画面と噛み合わなくなる(例: 単発のuserTurnのままFullHandPlayScreenへ切り替わると
+    // 読み込み中判定に引っかからず空白画面になる)ため、必ず新モードでスポットを取り直す。
+    void get().startNewSpot()
   },
   setScenarioEnabled: (id: string, enabled: boolean) => {
     const { settings } = get()
@@ -129,6 +169,16 @@ export const useGtoStore = create<GtoState>((set, get) => ({
     const next: GtoSettings = { ...settings, enabledScenarioIds }
     saveGtoSettings(next)
     set({ settings: next })
+  },
+
+  availability: null,
+  loadAvailability: async () => {
+    if (get().availability) return // 既にロード済み(セッション内メモリ保持、多重ロード防止)
+    if (!availabilityInflight) {
+      availabilityInflight = detectAvailability(SCENARIOS.map((s) => s.id))
+    }
+    const map = await availabilityInflight
+    set({ availability: map })
   },
 
   fullHand: null,
@@ -188,12 +238,17 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       activeDecisionIdx: 0,
     })
 
-    const { settings } = get()
+    await get().loadAvailability() // 既にロード済みなら即return(セッション内メモリ保持)
+    const { settings, availability } = get()
     try {
-      const scenario = getScenario(SCENARIO_ID)
-      const flop: FlopDef = pickWeightedFlop()
+      const playable = availability ? playableScenarioIds(availability) : new Set<string>()
+      const pool = selectScenarioPool(SCENARIOS, settings.enabledScenarioIds, playable)
+      const scenario = pickWeightedScenario(pool)
+
+      const flopPool = selectFlopPool(FLOPS, availability?.get(scenario.id))
+      const flop: FlopDef = pickWeightedFlop(flopPool)
       const flopId = flop.cards.join('')
-      const flopSolution = await loadFlopSolution(SCENARIO_ID, flopId)
+      const flopSolution = await loadFlopSolution(scenario.id, flopId)
       const userSeat: Seat = Math.random() < 0.5 ? 0 : 1
 
       if (settings.mode === 'full') {

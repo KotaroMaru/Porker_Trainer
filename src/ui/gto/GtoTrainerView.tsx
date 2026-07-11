@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { PlayScreen } from './PlayScreen'
+import { SettingsScreen } from './SettingsScreen'
 
 // P4 Step D: サブ画面切替(QuizViewパターン、ローカルuseState管理)。
-// P4は'play'のみ実装。review/bookmarks/settingsはP5/P6で実装するプレースホルダ。
+// P4は'play'のみ実装。P6 Step B9でsettingsを実装。review/bookmarksはP6 B10以降のプレースホルダ。
 
 type GtoMode = 'play' | 'review' | 'bookmarks' | 'settings'
 
@@ -42,7 +43,8 @@ export function GtoTrainerView() {
       </div>
 
       {mode === 'play' && <PlayScreen />}
-      {mode !== 'play' && (
+      {mode === 'settings' && <SettingsScreen />}
+      {mode !== 'play' && mode !== 'settings' && (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>
           {MODE_LABELS[mode]}はまだ実装されていません(今後のフェーズで追加予定)。
         </div>
