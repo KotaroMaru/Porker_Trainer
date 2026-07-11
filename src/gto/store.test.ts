@@ -4,11 +4,13 @@
 // フェッチ→デコード→スポット生成→採点の一連の流れを実データで検証する。
 // process.cwd()基準のパス解決を使う(grading.test.tsで判明したimport.meta.url問題を回避)。
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { useGtoStore } from './store'
+import { useGtoStore, initialTally, __setProviderFactoryForTests, __resetProviderFactoryForTests } from './store'
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
+import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
+import type { NodeProviderFactory } from './trainer/nodeDataProvider'
 
 const originalFetch = globalThis.fetch
 
@@ -35,7 +37,7 @@ beforeEach(() => {
     spot: null,
     grading: null,
     errorMessage: null,
-    sessionTally: { spots: 0, correct: 0, marginal: 0, totalEvLossBb: 0 },
+    sessionTally: initialTally(),
     review: null,
     reviewFeatures: [],
     reviewFeaturesStatus: 'idle',
@@ -267,5 +269,119 @@ describe('useGtoStore', () => {
     await new Promise((r) => setTimeout(r, 800))
     expect(useGtoStore.getState().reviewFeaturesStatus).toBe('idle')
     expect(useGtoStore.getState().review).toBeNull()
+  })
+})
+
+describe('useGtoStore (通しモード, P6 B7)', () => {
+  // Web WorkerはjsdomでexecuteできないためcreateInProcessProviderFactory(B4のテスト
+  // シーム)を__setProviderFactoryForTestsで注入する。低イテレーションで高速化。
+  beforeEach(() => {
+    __setProviderFactoryForTests(() => createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 }))
+    useGtoStore.setState({
+      status: 'idle',
+      spot: null,
+      grading: null,
+      chosenLabel: null,
+      errorMessage: null,
+      sessionTally: initialTally(),
+      settings: { mode: 'full', enabledScenarioIds: [] },
+      fullHand: null,
+      fullHandController: null,
+      review: null,
+      reviewFeatures: [],
+      reviewFeaturesStatus: 'idle',
+      activeDecisionIdx: 0,
+    })
+  })
+
+  afterEach(() => {
+    __resetProviderFactoryForTests()
+  })
+
+  /** statusがユーザー入力待ち(userTurn)またはハンド終了(handOver/error)になるまで待つ。 */
+  async function waitForStorePause(timeoutMs = 30000): Promise<void> {
+    const start = Date.now()
+    while (!['userTurn', 'handOver', 'error'].includes(useGtoStore.getState().status)) {
+      if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for store pause (status=${useGtoStore.getState().status})`)
+      await new Promise((r) => setTimeout(r, 20))
+    }
+  }
+
+  it('fullモードでcheckを選び続けるとhandOverに到達し、fullHand.resultが設定される', async () => {
+    await useGtoStore.getState().startNewSpot()
+    await waitForStorePause()
+
+    let guard = 0
+    while (useGtoStore.getState().status === 'userTurn') {
+      guard++
+      if (guard > 15) throw new Error('too many user decisions, possible infinite loop')
+      const snap = useGtoStore.getState().fullHand
+      if (!snap) throw new Error('fullHand should be set while status===userTurn')
+      const label = snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts[0].label
+      useGtoStore.getState().chooseAction(label)
+      await waitForStorePause()
+    }
+
+    expect(useGtoStore.getState().status).toBe('handOver')
+    expect(useGtoStore.getState().fullHand?.result).not.toBeNull()
+  }, 30_000)
+
+  it('openReviewFromResultでhandOver後にreview(複数決断もありうる)が構築され、statusがgradedになりtallyのhands/decisionsが増える', async () => {
+    await useGtoStore.getState().startNewSpot()
+    await waitForStorePause()
+    let guard = 0
+    while (useGtoStore.getState().status === 'userTurn') {
+      guard++
+      if (guard > 15) throw new Error('too many user decisions, possible infinite loop')
+      const snap = useGtoStore.getState().fullHand!
+      const label = snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts[0].label
+      useGtoStore.getState().chooseAction(label)
+      await waitForStorePause()
+    }
+    expect(useGtoStore.getState().status).toBe('handOver')
+
+    useGtoStore.getState().openReviewFromResult()
+
+    const state = useGtoStore.getState()
+    expect(state.status).toBe('graded')
+    expect(state.review).not.toBeNull()
+    expect(state.review!.decisions.length).toBeGreaterThanOrEqual(1)
+    expect(state.reviewFeatures.length).toBe(state.review!.decisions.length)
+    expect(state.sessionTally.hands).toBe(1)
+    expect(state.sessionTally.decisions).toBe(state.review!.decisions.length)
+  }, 30_000)
+
+  it('ソルブ途中でnextSpotを呼んでも、進行中のコントローラがクリーンにdisposeされる(factory.disposeを検証)', async () => {
+    let disposedCount = 0
+    __setProviderFactoryForTests(() => {
+      const inner = createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 })
+      const wrapped: NodeProviderFactory = {
+        forFlop: (s, b) => inner.forFlop(s, b),
+        forLiveStreet: (input) => inner.forLiveStreet(input),
+        dispose: () => {
+          disposedCount++
+          inner.dispose()
+        },
+      }
+      return wrapped
+    })
+
+    await useGtoStore.getState().startNewSpot()
+    await waitForStorePause()
+    expect(useGtoStore.getState().status).toBe('userTurn') // まだハンド途中
+
+    await useGtoStore.getState().nextSpot()
+
+    expect(disposedCount).toBeGreaterThanOrEqual(1)
+  }, 30_000)
+
+  it('単発モードの既存動作には影響しない(settings.modeで完全に分岐)', async () => {
+    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+    await useGtoStore.getState().startNewSpot()
+    const state = useGtoStore.getState()
+    expect(state.status).toBe('userTurn')
+    expect(state.spot).not.toBeNull()
+    expect(state.fullHand).toBeNull()
+    expect(state.fullHandController).toBeNull()
   })
 })

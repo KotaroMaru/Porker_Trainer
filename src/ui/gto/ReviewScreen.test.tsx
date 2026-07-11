@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import { ReviewScreen } from './ReviewScreen'
-import { useGtoStore } from '../../gto/store'
+import { useGtoStore, initialTally } from '../../gto/store'
 import { __resetSolutionCacheForTests } from '../../gto/loader/solutionLoader'
 import type { Card } from '../../engine/types'
 
@@ -38,7 +38,7 @@ async function advanceToGraded(): Promise<void> {
     grading: null,
     chosenLabel: null,
     errorMessage: null,
-    sessionTally: { spots: 0, correct: 0, marginal: 0, totalEvLossBb: 0 },
+    sessionTally: initialTally(),
     review: null,
     reviewFeatures: [],
     reviewFeaturesStatus: 'idle',
