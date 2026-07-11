@@ -151,7 +151,7 @@ describe('ReviewScreen', () => {
     expect(useGtoStore.getState().review).toBeNull()
   })
 
-  it('複数決断のレビュー(P6通しモード相当)では、ナビゲータチップに街ラベルが表示され、決断時点のボードが最終ボードと異なる決断でのみ追加行が表示される', async () => {
+  it('複数決断のレビュー(P6通しモード相当)では、ナビゲータチップに街ラベルが表示され、セクション3のボードは各決断時点のboardAtDecisionのみをカードで表示する(P7-3)', async () => {
     // FullHandController統合(B7)前でも、reviewBuilder.ts側の型(街ごとのReviewDecision)を
     // 直接使ってReviewScreen単体の複数決断描画を検証できる(合成2決断のReviewData)。
     await advanceToGraded()
@@ -169,14 +169,17 @@ describe('ReviewScreen', () => {
     expect(screen.getByText(/^フロップ /)).toBeInTheDocument()
     expect(screen.getByText(/^ターン /)).toBeInTheDocument()
 
-    // activeDecisionIdx=0(flop決断): boardAtDecision(3枚)がreview.board(4枚)と異なるため追加行が出る
-    expect(screen.getByText(/フロップ決断時点のボード/)).toBeInTheDocument()
+    // activeDecisionIdx=0(flop決断): boardAtDecisionは3枚(review.boardは4枚だが使われない)。
+    const boardContainer = screen.getByTestId('board-cards')
+    expect(boardContainer.children.length).toBe(flopDecision.boardAtDecision.length)
 
-    // ターン決断へ切り替えるとboardAtDecision===review.boardなので追加行は消える
+    // ターン決断へ切り替えるとboardAtDecisionが4枚に増える。
     screen.getByText('次 ▶').click()
     await waitFor(() => {
       expect(useGtoStore.getState().activeDecisionIdx).toBe(1)
     })
+    expect(screen.getByTestId('board-cards').children.length).toBe(turnDecision.boardAtDecision.length)
+    // 「決断時点のボード」という冗長な別行はP7-3で削除済み。
     expect(screen.queryByText(/決断時点のボード/)).not.toBeInTheDocument()
   })
 })

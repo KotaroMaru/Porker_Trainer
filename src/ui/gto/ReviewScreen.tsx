@@ -11,13 +11,14 @@ import { useGtoStore } from '../../gto/store'
 import { buildExplanation } from '../../gto/explain/templates'
 import { buildSpotMarkdown } from '../../gto/explain/exportSpot'
 import { handStrFromCombo } from '../../gto/trainer/reviewBuilder'
+import { CardView } from '../CardView'
 import { StrategyMixBar } from './StrategyMixBar'
 import { RangeHeatGrid } from './RangeHeatGrid'
 import { ResponseRangePanel } from './ResponseRangePanel'
 import { EquityDistChart } from './EquityDistChart'
 import { BlockerPanel } from './BlockerPanel'
 import { CollapsibleSection } from './CollapsibleSection'
-import { actionLabelJa, rankLabel, suitSymbol, VERDICT_LABEL, VERDICT_COLOR, STREET_LABEL_JA } from './labels'
+import { actionLabelJa, VERDICT_LABEL, VERDICT_COLOR, STREET_LABEL_JA } from './labels'
 
 function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
   return verdict === 'correct' ? '○' : verdict === 'marginal' ? '△' : '✕'
@@ -115,36 +116,22 @@ export function ReviewScreen() {
         </button>
       </div>
 
-      {/* 3. ボード+自分のハンド コンパクト1行 */}
+      {/* 3. ボード+自分のハンド コンパクト1行(P7-3: この決断時点のボード=decision.boardAtDecisionを
+          カードビジュアルで表示。通しモードのflop/turn決断では最終ボードより枚数が少ない)。 */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, padding: '8px 10px', background: 'var(--panel-bg)', borderRadius: 8, flexWrap: 'wrap' }}>
         <span style={{ color: 'var(--text-dim)' }}>ボード</span>
-        {review.board.map((c, i) => (
-          <span key={i} style={{ color: c.suit === 'h' || c.suit === 'd' ? 'var(--card-red)' : 'var(--text)', fontWeight: 600 }}>
-            {rankLabel(c.rank)}
-            {suitSymbol(c.suit)}
-          </span>
-        ))}
-        <span style={{ color: 'var(--text-dim)', marginLeft: 8 }}>あなたの手</span>
-        {review.userCombo.map((c, i) => (
-          <span key={i} style={{ color: c.suit === 'h' || c.suit === 'd' ? 'var(--card-red)' : 'var(--text)', fontWeight: 600 }}>
-            {rankLabel(c.rank)}
-            {suitSymbol(c.suit)}
-          </span>
-        ))}
-      </div>
-
-      {/* この決断時点のボードが最終ボードと異なる場合のみ表示(通しモード・flop/turn決断)。 */}
-      {decision.boardAtDecision.length !== review.board.length && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 10px', color: 'var(--text-dim)', flexWrap: 'wrap' }}>
-          <span>{STREET_LABEL_JA[decision.street]}決断時点のボード</span>
+        <div data-testid="board-cards" style={{ display: 'flex', gap: 4 }}>
           {decision.boardAtDecision.map((c, i) => (
-            <span key={i} style={{ color: c.suit === 'h' || c.suit === 'd' ? 'var(--card-red)' : 'var(--text)', fontWeight: 600 }}>
-              {rankLabel(c.rank)}
-              {suitSymbol(c.suit)}
-            </span>
+            <CardView key={i} card={c} size="sm" />
           ))}
         </div>
-      )}
+        <span style={{ color: 'var(--text-dim)', marginLeft: 8 }}>あなたの手</span>
+        <div style={{ display: 'flex', gap: 4 }}>
+          {review.userCombo.map((c, i) => (
+            <CardView key={i} card={c} size="sm" />
+          ))}
+        </div>
+      </div>
 
       {/* 4. GTO戦略ミックス帯グラフ+アクション別EV表 */}
       <div>
