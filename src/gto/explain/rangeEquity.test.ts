@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { computeSharedRunoutEquity, defaultRunoutStride } from './rangeEquity'
 import { calculateEquityExact } from '../../analysis/equity'
+import { computeRangeVsRangeEquity } from '../solver/handEval'
 import type { Card } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
 import { createDeck, cardKey } from '../../engine/deck'
@@ -76,6 +77,69 @@ describe('computeSharedRunoutEquity', () => {
 
     expect(Math.abs(exact.heroAvgEquity - strided.heroAvgEquity)).toBeLessThan(0.02)
     expect(Math.abs(exact.villainAvgEquity - strided.villainAvgEquity)).toBeLessThan(0.02)
+  })
+
+  describe('5枚ボード(リバー、P6用)', () => {
+    // 残りカードが0枚(remainingToDraw===0)のとき、空ランアウト1本(=現ボードのみ)で
+    // 1回だけ評価する。リバーは既存handEval.computeRangeVsRangeEquity(現ボード厳密)と
+    // 理論的に同じ計算になるはずなので、それを正解として突合する。
+    const RIVER_BOARD: Card[] = [card(13, 'c'), card(11, 'c'), card(2, 'd'), card(7, 's'), card(4, 'h')] // Kc Jc 2d 7s 4h
+
+    it('単一villainコンボに対するheroEquityがcomputeRangeVsRangeEquityの当該コンボの値と一致する', () => {
+      const hero: Combo = [card(14, 'h'), card(14, 's')] // AhAs
+      const villain: Combo = [card(9, 'd'), card(9, 'c')] // 9d9c
+
+      const expected = computeRangeVsRangeEquity([hero], [villain], RIVER_BOARD)
+      const expectedEquity = [...expected.perComboEquity.values()][0]
+
+      const result = computeSharedRunoutEquity({
+        heroCombos: [hero],
+        heroWeights: [1],
+        villainCombos: [villain],
+        villainWeights: [1],
+        board: RIVER_BOARD,
+      })
+
+      expect(result.heroEquity[0]).toBeCloseTo(expectedEquity, 6)
+    })
+
+    it('複数villainコンボの重み付き平均もcomputeRangeVsRangeEquityの加重平均と一致する', () => {
+      const hero: Combo = [card(14, 'h'), card(14, 's')] // AhAs
+      const villainA: Combo = [card(9, 'd'), card(9, 'h')] // 9d9h(heroと非衝突)
+      const villainB: Combo = [card(8, 'd'), card(6, 'd')] // 8d6d(heroと非衝突)
+
+      const eqA = [...computeRangeVsRangeEquity([hero], [villainA], RIVER_BOARD).perComboEquity.values()][0]
+      const eqB = [...computeRangeVsRangeEquity([hero], [villainB], RIVER_BOARD).perComboEquity.values()][0]
+      const wA = 2
+      const wB = 1
+      const expectedWeighted = (eqA * wA + eqB * wB) / (wA + wB)
+
+      const result = computeSharedRunoutEquity({
+        heroCombos: [hero],
+        heroWeights: [1],
+        villainCombos: [villainA, villainB],
+        villainWeights: [wA, wB],
+        board: RIVER_BOARD,
+      })
+
+      expect(result.heroEquity[0]).toBeCloseTo(expectedWeighted, 6)
+    })
+
+    it('決定論的かつ高速(単一ランアウトのみ評価)', () => {
+      const usedKeys = new Set(RIVER_BOARD.map(cardKey))
+      const remaining = createDeck().filter((c) => !usedKeys.has(cardKey(c)))
+      const heroCombos: Combo[] = [[remaining[0], remaining[1]]]
+      const villainCombos: Combo[] = [[remaining[2], remaining[3]], [remaining[4], remaining[5]]]
+      const input = { heroCombos, heroWeights: [1], villainCombos, villainWeights: [1, 1], board: RIVER_BOARD }
+
+      const start = performance.now()
+      const r1 = computeSharedRunoutEquity(input)
+      const r2 = computeSharedRunoutEquity(input)
+      const elapsed = performance.now() - start
+
+      expect(r1.heroEquity[0]).toBe(r2.heroEquity[0])
+      expect(elapsed).toBeLessThan(50)
+    })
   })
 
   describe('defaultRunoutStride(runoutStride省略時の自動決定)', () => {

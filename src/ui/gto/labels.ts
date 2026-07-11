@@ -3,6 +3,14 @@
 // PlayScreen.tsxのローカル定義をここに集約し、ReviewScreen.tsx(B9)と共有する。
 
 import type { GradeVerdict } from '../../gto/trainer/grading'
+import type { Street } from '../../gto/trainer/reviewBuilder'
+
+export const STREET_LABEL_JA: Record<Street, string> = {
+  preflop: 'プリフロップ',
+  flop: 'フロップ',
+  turn: 'ターン',
+  river: 'リバー',
+}
 
 export const ACTION_LABEL_JA: Record<string, string> = {
   check: 'チェック',

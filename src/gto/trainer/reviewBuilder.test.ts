@@ -99,6 +99,9 @@ describe('reviewBuilder (実.binフィクスチャによる統合テスト)', ()
 
       expect(review.decisions.length).toBe(1)
       const decision = review.decisions[0]
+      expect(decision.street).toBe('flop')
+      expect(decision.boardAtDecision).toEqual(review.board)
+      expect(decision.boardAtDecision.length).toBe(3)
       expect(decision.responseNodes.length).toBe(spot.decodedNode.actionLabels.length)
       for (const r of decision.responseNodes) {
         expect(solution.nodes.has(r.nodeId)).toBe(true)

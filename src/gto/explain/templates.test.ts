@@ -57,6 +57,7 @@ function buildSyntheticDecision(kind: 'root' | 'facingBet', verdict: GradeVerdic
     street: 'flop',
     nodeId: '',
     seat: 0,
+    boardAtDecision: [],
     chosenLabel,
     grading,
     potBbAtDecision: 10,

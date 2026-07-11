@@ -34,7 +34,7 @@ export interface RangeEquityInput {
   heroWeights: readonly number[]
   villainCombos: readonly Combo[]
   villainWeights: readonly number[]
-  /** 3枚(フロップ)または4枚(ターン、P6用)。5枚に達するまでの残りを標本ランアウトする。 */
+  /** 3枚(フロップ)/4枚(ターン)/5枚(リバー、P6用)。5枚に達するまでの残りを標本ランアウトする(5枚なら残り0=現ボードのみ1回評価)。 */
   board: Card[]
   /** ランアウト標本間隔。省略時はdefaultRunoutStride()で総コンボ数から自動決定。テストでは1=全列挙。 */
   runoutStride?: number
@@ -89,8 +89,13 @@ function upperBound(scores: number[], score: number): number {
   return lo
 }
 
-/** 残りデッキから、必要枚数分のランアウト(カード配列)を決定論的な順序で全列挙する。1枚または2枚のみ対応(P5=2枚、P6ターン=1枚)。 */
-function enumerateRunouts(remainingDeck: Card[], size: 1 | 2): Card[][] {
+/**
+ * 残りデッキから、必要枚数分のランアウト(カード配列)を決定論的な順序で全列挙する。
+ * 0枚(リバー、残りカードなし)/1枚(ターン)/2枚(フロップ)に対応。0枚は「現ボードのみ」の
+ * 空ランアウト1本を返す(乱数不使用で必ず唯一の"ランアウト"として選ばれる)。
+ */
+function enumerateRunouts(remainingDeck: Card[], size: 0 | 1 | 2): Card[][] {
+  if (size === 0) return [[]]
   if (size === 1) return remainingDeck.map((c) => [c])
   const runouts: Card[][] = []
   for (let i = 0; i < remainingDeck.length; i++) {
@@ -203,13 +208,13 @@ export function computeSharedRunoutEquity(input: RangeEquityInput): RangeEquityO
   if (villainCombos.length !== villainWeights.length) throw new Error('computeSharedRunoutEquity: villainCombos/villainWeights length mismatch')
 
   const remainingToDraw = 5 - board.length
-  if (remainingToDraw !== 1 && remainingToDraw !== 2) {
-    throw new Error(`computeSharedRunoutEquity: unsupported board length ${board.length} (expected 3 or 4)`)
+  if (remainingToDraw !== 0 && remainingToDraw !== 1 && remainingToDraw !== 2) {
+    throw new Error(`computeSharedRunoutEquity: unsupported board length ${board.length} (expected 3, 4, or 5)`)
   }
 
   const boardKeys = new Set(board.map(cardKey))
   const remainingDeck = createDeck().filter((c) => !boardKeys.has(cardKey(c)))
-  const allRunouts = enumerateRunouts(remainingDeck, remainingToDraw as 1 | 2)
+  const allRunouts = enumerateRunouts(remainingDeck, remainingToDraw as 0 | 1 | 2)
   const runoutStride = input.runoutStride ?? defaultRunoutStride(allRunouts.length, heroCombos.length + villainCombos.length)
   const selectedRunouts = allRunouts.filter((_, i) => i % runoutStride === 0)
 

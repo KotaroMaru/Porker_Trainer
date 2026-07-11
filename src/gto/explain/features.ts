@@ -148,7 +148,7 @@ function computeResponseBreakdown(decision: ReviewDecision, node: DecodedNode): 
   })
 }
 
-function computeResponses(review: ReviewData, decision: ReviewDecision, userCombo: Combo): ActionResponseSummary[] {
+function computeResponses(decision: ReviewDecision, userCombo: Combo): ActionResponseSummary[] {
   const bestLabel = decision.grading.bestLabel
   const chosenLabel = decision.chosenLabel
   const handCount = decision.villainCombos.length
@@ -176,7 +176,7 @@ function computeResponses(review: ReviewData, decision: ReviewDecision, userComb
         heroWeights: [1],
         villainCombos: decision.villainCombos,
         villainWeights: continueWeights,
-        board: review.board,
+        board: decision.boardAtDecision,
       })
       heroEquityVsContinueRange = eqResult.heroEquity[0]
     }
@@ -241,7 +241,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const decision = review.decisions[decisionIdx]
   if (!decision) throw new Error(`computeSpotFeatures: no decision at index ${decisionIdx}`)
   const userCombo = review.userCombo
-  const board = review.board
+  const board = decision.boardAtDecision
 
   const handClass = classifyHandStrength(userCombo, board)
   const draws = classifyDraws(userCombo, board)
@@ -274,7 +274,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const equityBuckets = buildEquityBuckets(rangeEq.heroEquity, decision.heroWeights, rangeEq.villainEquity, decision.villainWeights)
 
-  const responses = computeResponses(review, decision, userCombo)
+  const responses = computeResponses(decision, userCombo)
 
   const nodeContext = computeNodeContext(decision)
 

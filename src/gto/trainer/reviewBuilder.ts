@@ -23,10 +23,12 @@ import { buildPreflopScript } from './preflopScript'
 import { isOopPosition } from '../data/scenarios'
 import { rootNodeId, childNodeId, parseNodeId } from '../tree/nodeId'
 
+export type Street = 'preflop' | 'flop' | 'turn' | 'river'
+
 export interface HistoryEntry {
-  street: 'preflop' | 'flop' // P6: 'turn'|'river'を追加
+  street: Street
   position: string
-  /** 表示用ラベル。preflopは"レイズ 2.5bb"のように既にJapanese整形済み、flopは
+  /** 表示用ラベル。preflopは"レイズ 2.5bb"のように既にJapanese整形済み、flop以降は
    *  "bet33"等の生アクションラベル(UI側でACTION_LABEL_JAを通して翻訳する)。 */
   label: string
   isUserDecision: boolean
@@ -35,10 +37,13 @@ export interface HistoryEntry {
 }
 
 export interface ReviewDecision {
-  street: 'flop'
+  street: 'flop' | 'turn' | 'river'
   nodeId: string
   /** 0=OOP, 1=IP。この決断の手番だったプレイヤー(=ユーザー)。 */
   seat: Seat
+  /** その決断が行われた時点のボード(3/4/5枚)。P5(フロップ単発)はreview.boardと同じ。
+   *  P6の通しモードでは、ターン・リバー決断はそのストリートまでの枚数を持つ。 */
+  boardAtDecision: Card[]
   chosenLabel: string
   grading: GradeResult
   /** decisionNode.potBb(この決断時点でのポット、bb)。 */
@@ -179,6 +184,7 @@ export function buildReview(spot: SpotState, grading: GradeResult, chosenLabel: 
     street: 'flop',
     nodeId,
     seat: userSeat,
+    boardAtDecision: board,
     chosenLabel,
     grading,
     potBbAtDecision,
