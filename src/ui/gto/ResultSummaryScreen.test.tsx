@@ -60,6 +60,7 @@ function baseSnapshot(result: HandResult): FullHandSnapshot {
     actionsWithAmounts: [],
     history: [],
     result,
+    latestActions: [],
     scenario,
     flop,
     userSeat: 0,

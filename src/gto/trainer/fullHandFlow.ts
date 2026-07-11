@@ -77,6 +77,12 @@ export interface FullHandSnapshot {
   actionsWithAmounts: { label: string; amountBb: number }[]
   history: HistoryEntry[]
   result: HandResult | null
+  /**
+   * 現在のストリートで各プレイヤーが直近に取ったアクション(0〜2件、行動した順ではなく
+   * 常にOOP→IP順)。P7-2: プレイ中の場(フェルト)表示専用(「BB ベット4.1bb」等)。
+   * HistoryEntry/ブックマークcodecには含めない非永続の表示専用データ。
+   */
+  latestActions: { position: string; label: string; amountBb: number; isUser: boolean }[]
 
   // 以下はハンド全体で不変(構築時に確定)。毎emitで同じ値を含めることで、
   // UI層(PlayScreen等)がFullHandSnapshotだけを見ればプレイ画面を組み立てられるようにする
@@ -105,6 +111,11 @@ interface RecordedAction {
   nodeId: string
   label: string
   actingPlayer: PlayerIdx
+}
+
+interface LatestAction {
+  label: string
+  amountBb: number
 }
 
 interface PendingUserDecision {
@@ -177,6 +188,8 @@ export class FullHandController {
   private streetContributed: [number, number] = [0, 0]
   /** 完了済みストリートまでの投入額累計(プリフロップ除く、ポストフロップ分のみ)。 */
   private priorStreetsContributed: [number, number] = [0, 0]
+  /** 現在のストリートで各プレイヤーが直近に取ったアクション(P7-2、場の表示専用)。街が変わるとクリアする。 */
+  private latestActionBySeat: [LatestAction | null, LatestAction | null] = [null, null]
 
   constructor(deps: FullHandControllerDeps) {
     this.deps = deps
@@ -219,6 +232,12 @@ export class FullHandController {
   }
 
   private emit(): void {
+    const latestActions: FullHandSnapshot['latestActions'] = []
+    for (const seat of [0, 1] as const) {
+      const a = this.latestActionBySeat[seat]
+      if (a) latestActions.push({ position: this.positionOf(seat), label: a.label, amountBb: a.amountBb, isUser: seat === this.userSeat })
+    }
+
     this.deps.onUpdate({
       phase: this.phase,
       street: this.street,
@@ -228,6 +247,7 @@ export class FullHandController {
       actionsWithAmounts: this.phase === 'userTurn' && this.curNode.kind === 'decision' ? actionLabelsWithAmounts(this.curNode) : [],
       history: this.history,
       result: this.result,
+      latestActions,
       scenario: this.deps.scenario,
       flop: this.deps.flop,
       userSeat: this.userSeat,
@@ -273,6 +293,7 @@ export class FullHandController {
 
     const investments = actionInvestmentsBb(decisionNode)
     this.streetContributed[actingPlayer] = decisionNode.contributedBb![actingPlayer] + investments[actionIdx]
+    this.latestActionBySeat[actingPlayer] = { label, amountBb: investments[actionIdx] }
 
     this.streetActionLog.push({ nodeId: this.curNodeId, label, actingPlayer })
     this.history.push({
@@ -467,6 +488,7 @@ export class FullHandController {
     this.board = newBoard
     this.streetInitialOopWeights = filteredOop.weights
     this.streetInitialIpWeights = filteredIp.weights
+    this.latestActionBySeat = [null, null] // 新しい街ではチップが場に出る感覚をリセットする
 
     // 呼び出し元(advance())はterminal/chance両分岐とも、この関数に入る前に
     // remainingStackBb - streetContributed の残りが実質ゼロ(オールイン成立)なら

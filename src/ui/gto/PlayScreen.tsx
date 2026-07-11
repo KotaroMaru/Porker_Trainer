@@ -138,10 +138,11 @@ function SingleSpotPlayScreen() {
           gap: 16,
         }}
       >
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <CardView faceDown size="sm" />
           <CardView faceDown size="sm" />
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center', marginLeft: 6 }}>{botPosition}</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 6 }}>{botPosition}</span>
+          {spot.botActionsBefore.length > 0 && <ActionChip text={actionLabelJa(spot.botActionsBefore[spot.botActionsBefore.length - 1].label)} />}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
@@ -183,6 +184,32 @@ function SingleSpotPlayScreen() {
 // ============================================================
 // 通しモード(P6 Step B8)
 // ============================================================
+
+// P7-2: 場(フェルト)に表示する「アクション名+金額」のチップ用ラベルを作る
+// (checkやfoldはamountBb===0なので金額を出さない、actionMath.tsの規約通り)。
+function actionChipLabel(a: { label: string; amountBb: number } | undefined): string | null {
+  if (!a) return null
+  return actionLabelJa(a.label) + (a.amountBb > 0 ? ` ${a.amountBb.toFixed(1)}bb` : '')
+}
+
+function ActionChip({ text }: { text: string }) {
+  return (
+    <span
+      data-testid="action-chip"
+      style={{
+        fontSize: 11,
+        fontWeight: 600,
+        color: 'var(--gold-light)',
+        background: 'rgba(0,0,0,0.35)',
+        padding: '2px 8px',
+        borderRadius: 10,
+        marginLeft: 6,
+      }}
+    >
+      {text}
+    </span>
+  )
+}
 
 function FullHandFooter({ sessionTally }: { sessionTally: SessionTally }) {
   const netSign = sessionTally.totalNetBb > 0 ? '+' : ''
@@ -277,10 +304,14 @@ function FullHandPlayScreen() {
 
       {/* テーブル */}
       <div style={{ background: 'var(--green-felt)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
           <CardView faceDown size="sm" />
           <CardView faceDown size="sm" />
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center', marginLeft: 6 }}>{fullHand.botPosition}</span>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 6 }}>{fullHand.botPosition}</span>
+          {(() => {
+            const text = actionChipLabel(fullHand.latestActions.find((a) => !a.isUser))
+            return text && <ActionChip text={text} />
+          })()}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
@@ -294,10 +325,14 @@ function FullHandPlayScreen() {
           </div>
         </div>
 
-        <div style={{ display: 'flex', gap: 6 }}>
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center', marginRight: 6 }}>{fullHand.userPosition}(あなた)</span>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginRight: 6 }}>{fullHand.userPosition}(あなた)</span>
           <CardView card={fullHand.userCombo[0]} size="sm" />
           <CardView card={fullHand.userCombo[1]} size="sm" />
+          {(() => {
+            const text = actionChipLabel(fullHand.latestActions.find((a) => a.isUser))
+            return text && <ActionChip text={text} />
+          })()}
         </div>
       </div>
 

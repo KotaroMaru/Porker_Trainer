@@ -63,6 +63,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
     actionsWithAmounts: [{ label: 'check', amountBb: 0 }],
     history: [{ street: 'preflop', position: scenario.raiser.position, label: 'レイズ 2.5bb', isUserDecision: false }],
     result: null,
+    latestActions: [],
     scenario,
     flop,
     userSeat: 0,
@@ -119,6 +120,30 @@ describe('PlayScreen (通しモード, P6 B8)', () => {
 
     expect(screen.getByText('チェック')).toBeInTheDocument()
     expect(screen.getByText('ベット 33%')).toBeInTheDocument()
+  })
+
+  it('P7-2: 場に両プレイヤーの最新アクション(位置・アクション名・金額)がチップ表示される', () => {
+    resetToFullMode({
+      status: 'userTurn',
+      fullHand: baseFullHand({
+        phase: 'userTurn',
+        latestActions: [
+          { position: 'BTN', label: 'bet75', amountBb: 4.1, isUser: false },
+          { position: 'BB', label: 'call', amountBb: 4.1, isUser: true },
+        ],
+      }),
+    })
+    render(<PlayScreen />)
+
+    expect(screen.getByText(/ベット 75%\s*4\.1bb/)).toBeInTheDocument()
+    expect(screen.getByText(/コール\s*4\.1bb/)).toBeInTheDocument()
+  })
+
+  it('P7-2: latestActionsが空の場合はアクションチップを表示しない', () => {
+    resetToFullMode({ status: 'userTurn', fullHand: baseFullHand({ phase: 'userTurn', latestActions: [] }) })
+    render(<PlayScreen />)
+
+    expect(screen.queryByTestId('action-chip')).not.toBeInTheDocument()
   })
 
   it('handOver時はResultSummaryScreenが表示され、フッターに通しモード集計が出る', () => {
