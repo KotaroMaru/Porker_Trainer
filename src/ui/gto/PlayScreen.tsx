@@ -8,9 +8,26 @@ import { CardView } from '../CardView'
 import { ReviewScreen } from './ReviewScreen'
 import { ResultSummaryScreen } from './ResultSummaryScreen'
 import { actionLabelJa, rankLabel, suitSymbol, STREET_LABEL_JA } from './labels'
+import { actionColor } from './actionColors'
 
 // P4 Step D / P5 Step B9: プレイ画面。settings.modeで単発/通しの2実装に分岐する
 // (P6 Step B8で通し=FullHandPlayScreenを追加。単発=SingleSpotPlayScreenは無変更)。
+
+// P7-1: アクションボタンをレビュー画面と同じ配色(actionColors.ts)で塗り分ける
+// (check=緑/call=フェルト緑/fold=青/bet系=赤濃淡)。全ての実装済み背景色に対し
+// 白文字が十分なコントラストを持つことをindex.cssの値で確認済み。
+function actionButtonStyle(label: string): React.CSSProperties {
+  return {
+    flex: '1 1 100px',
+    padding: '12px 8px',
+    fontSize: 14,
+    fontWeight: 600,
+    background: actionColor(label),
+    color: '#fff',
+    border: '1px solid rgba(0,0,0,0.25)',
+    borderRadius: 8,
+  }
+}
 
 export function PlayScreen() {
   const mode = useGtoStore((s) => s.settings.mode)
@@ -148,21 +165,9 @@ function SingleSpotPlayScreen() {
       {/* アクションボタン */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {spot.actionsWithAmounts.map((a) => (
-          <button
-            key={a.label}
-            onClick={() => chooseAction(a.label)}
-            style={{
-              flex: '1 1 100px',
-              padding: '12px 8px',
-              fontSize: 14,
-              fontWeight: 600,
-              background: 'var(--panel-bg-light)',
-              border: '1px solid var(--panel-border)',
-              borderRadius: 8,
-            }}
-          >
+          <button key={a.label} onClick={() => chooseAction(a.label)} style={actionButtonStyle(a.label)}>
             {actionLabelJa(a.label)}
-            {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
+            {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
           </button>
         ))}
       </div>
@@ -305,21 +310,9 @@ function FullHandPlayScreen() {
       ) : (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {fullHand.actionsWithAmounts.map((a) => (
-            <button
-              key={a.label}
-              onClick={() => chooseAction(a.label)}
-              style={{
-                flex: '1 1 100px',
-                padding: '12px 8px',
-                fontSize: 14,
-                fontWeight: 600,
-                background: 'var(--panel-bg-light)',
-                border: '1px solid var(--panel-border)',
-                borderRadius: 8,
-              }}
-            >
+            <button key={a.label} onClick={() => chooseAction(a.label)} style={actionButtonStyle(a.label)}>
               {actionLabelJa(a.label)}
-              {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
+              {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
             </button>
           ))}
         </div>
