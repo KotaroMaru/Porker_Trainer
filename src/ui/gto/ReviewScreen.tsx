@@ -17,7 +17,7 @@ import { ResponseRangePanel } from './ResponseRangePanel'
 import { EquityDistChart } from './EquityDistChart'
 import { BlockerPanel } from './BlockerPanel'
 import { CollapsibleSection } from './CollapsibleSection'
-import { actionLabelJa, rankLabel, suitSymbol, VERDICT_LABEL, VERDICT_COLOR } from './labels'
+import { actionLabelJa, rankLabel, suitSymbol, VERDICT_LABEL, VERDICT_COLOR, STREET_LABEL_JA } from './labels'
 
 function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
   return verdict === 'correct' ? '○' : verdict === 'marginal' ? '△' : '✕'
@@ -73,6 +73,7 @@ export function ReviewScreen() {
               cursor: hasMultipleDecisions ? 'pointer' : 'default',
             }}
           >
+            {hasMultipleDecisions && `${STREET_LABEL_JA[d.street]} `}
             {verdictMark(d.grading.verdict)} {actionLabelJa(d.chosenLabel)}
             {d.grading.evLossBb > 0.01 && ` -${d.grading.evLossBb.toFixed(2)}bb`}
           </button>
@@ -118,6 +119,19 @@ export function ReviewScreen() {
           </span>
         ))}
       </div>
+
+      {/* この決断時点のボードが最終ボードと異なる場合のみ表示(通しモード・flop/turn決断)。 */}
+      {decision.boardAtDecision.length !== review.board.length && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 10px', color: 'var(--text-dim)', flexWrap: 'wrap' }}>
+          <span>{STREET_LABEL_JA[decision.street]}決断時点のボード</span>
+          {decision.boardAtDecision.map((c, i) => (
+            <span key={i} style={{ color: c.suit === 'h' || c.suit === 'd' ? 'var(--card-red)' : 'var(--text)', fontWeight: 600 }}>
+              {rankLabel(c.rank)}
+              {suitSymbol(c.suit)}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* 4. GTO戦略ミックス帯グラフ+アクション別EV表 */}
       <div>

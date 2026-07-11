@@ -90,6 +90,18 @@ describe('buildSpotMarkdown (実.binフィクスチャによる統合テスト)'
     expect(md).toMatch(/[AKQJT2-9]{2,3}\s+\d+%/)
   })
 
+  it('この決断セクションにストリートと決断時点のボードが出力される(P6 B6)', () => {
+    const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+    const chosenLabel = spot.decodedNode.actionLabels[0]
+    const grading = applyUserAction(spot, chosenLabel)
+    const review = buildReview(spot, grading, chosenLabel)
+
+    const md = buildSpotMarkdown(review, 0, null, null)
+
+    expect(md).toContain('ストリート: フロップ')
+    expect(md).toContain('この決断時点のボード')
+  })
+
   it('存在しないdecisionIndexを渡すとエラーを投げる', () => {
     const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
     const chosenLabel = spot.decodedNode.actionLabels[0]

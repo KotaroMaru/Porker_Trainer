@@ -54,6 +54,12 @@ export interface GtoState {
   activeDecisionIdx: number
   setActiveDecisionIdx: (i: number) => void
 
+  /**
+   * reviewFeatures[idx]が未計算なら計算をキックする(表示中の決断のみオンデマンド計算、
+   * P6 B6)。既に計算済み・計算中でもreview自体が無い場合は何もしない。
+   */
+  ensureFeatures: (idx: number) => void
+
   startNewSpot: () => Promise<void>
   chooseAction: (label: string) => void
   nextSpot: () => Promise<void>
@@ -71,7 +77,36 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   reviewFeatures: [],
   reviewFeaturesStatus: 'idle',
   activeDecisionIdx: 0,
-  setActiveDecisionIdx: (i: number) => set({ activeDecisionIdx: i }),
+  setActiveDecisionIdx: (i: number) => {
+    set({ activeDecisionIdx: i })
+    get().ensureFeatures(i)
+  },
+
+  ensureFeatures: (idx: number) => {
+    const { review, reviewFeatures } = get()
+    if (!review) return
+    if (idx < 0 || idx >= review.decisions.length) return
+    if (reviewFeatures[idx] != null) return // 計算済み
+
+    set({ reviewFeaturesStatus: 'computing' })
+    // computeSpotFeatures(レンジ対レンジのエクイティ計算を含み実測約600ms)を
+    // setTimeout(0)で1フレーム遅延させ、判定バッジが先に描画されるようにする。
+    setTimeout(() => {
+      // 別スポットへ遷移済みなら結果を書き込まない(古い計算結果の混入防止)。
+      if (get().review !== review) return
+      try {
+        const features = computeSpotFeatures(review, idx)
+        set((state) => {
+          if (state.review !== review) return {}
+          const next = [...state.reviewFeatures]
+          next[idx] = features
+          return { reviewFeatures: next, reviewFeaturesStatus: 'ready' }
+        })
+      } catch {
+        set((state) => (state.review === review ? { reviewFeaturesStatus: 'error' } : {}))
+      }
+    }, 0)
+  },
 
   startNewSpot: async () => {
     set({
@@ -115,22 +150,12 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       sessionTally: nextTally,
       review,
       reviewFeatures: new Array(review.decisions.length).fill(null),
-      reviewFeaturesStatus: 'computing',
+      reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
     })
-
-    // P5は常にdecisions.length===1なので全件計算しても問題ないが、P6の通し
-    // モード(複数決断)では現在表示中の決断だけを計算する方式に見直す必要がある。
-    setTimeout(() => {
-      // 別スポットへ遷移済みなら結果を書き込まない(古い計算結果の混入防止)。
-      if (get().review !== review) return
-      try {
-        const features = review.decisions.map((_, i) => computeSpotFeatures(review, i))
-        set({ reviewFeatures: features, reviewFeaturesStatus: 'ready' })
-      } catch {
-        set({ reviewFeaturesStatus: 'error' })
-      }
-    }, 0)
+    // 単発モードは常にdecisions.length===1なので、表示中(idx=0)の決断だけを
+    // 計算すれば全件計算と同じ挙動になる(P6 B6: ensureFeaturesへ委譲)。
+    get().ensureFeatures(0)
   },
 
   nextSpot: async () => {

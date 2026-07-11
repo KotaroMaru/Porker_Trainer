@@ -10,6 +10,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { ReviewScreen } from './ReviewScreen'
 import { useGtoStore } from '../../gto/store'
 import { __resetSolutionCacheForTests } from '../../gto/loader/solutionLoader'
+import type { Card } from '../../engine/types'
 
 const originalFetch = globalThis.fetch
 
@@ -148,5 +149,34 @@ describe('ReviewScreen', () => {
     })
     expect(useGtoStore.getState().review).not.toBe(firstReview)
     expect(useGtoStore.getState().review).toBeNull()
+  })
+
+  it('複数決断のレビュー(P6通しモード相当)では、ナビゲータチップに街ラベルが表示され、決断時点のボードが最終ボードと異なる決断でのみ追加行が表示される', async () => {
+    // FullHandController統合(B7)前でも、reviewBuilder.ts側の型(街ごとのReviewDecision)を
+    // 直接使ってReviewScreen単体の複数決断描画を検証できる(合成2決断のReviewData)。
+    await advanceToGraded()
+    const baseReview = useGtoStore.getState().review!
+    const extraCard: Card = { rank: 2, suit: 'c' }
+    const finalBoard: Card[] = [...baseReview.board, extraCard]
+    const flopDecision = { ...baseReview.decisions[0], street: 'flop' as const, boardAtDecision: baseReview.board }
+    const turnDecision = { ...baseReview.decisions[0], street: 'turn' as const, boardAtDecision: finalBoard, nodeId: 'synthetic-turn-decision' }
+    const syntheticReview = { ...baseReview, board: finalBoard, decisions: [flopDecision, turnDecision] }
+    useGtoStore.setState({ review: syntheticReview, reviewFeatures: [null, null], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0 })
+
+    render(<ReviewScreen />)
+
+    // ナビゲータチップに街ラベル(フロップ/ターン)が表示される
+    expect(screen.getByText(/^フロップ /)).toBeInTheDocument()
+    expect(screen.getByText(/^ターン /)).toBeInTheDocument()
+
+    // activeDecisionIdx=0(flop決断): boardAtDecision(3枚)がreview.board(4枚)と異なるため追加行が出る
+    expect(screen.getByText(/フロップ決断時点のボード/)).toBeInTheDocument()
+
+    // ターン決断へ切り替えるとboardAtDecision===review.boardなので追加行は消える
+    screen.getByText('次 ▶').click()
+    await waitFor(() => {
+      expect(useGtoStore.getState().activeDecisionIdx).toBe(1)
+    })
+    expect(screen.queryByText(/決断時点のボード/)).not.toBeInTheDocument()
   })
 })

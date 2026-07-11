@@ -187,6 +187,70 @@ describe('useGtoStore', () => {
     expect(useGtoStore.getState().activeDecisionIdx).toBe(2)
   })
 
+  it('ensureFeaturesは指定idxのみ計算し、他のidxはnullのまま(表示中の決断のみオンデマンド計算)', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    await waitForReviewFeatures()
+    const baseReview = useGtoStore.getState().review
+    if (!baseReview) throw new Error('review should be set')
+
+    // FullHandController統合(B7)前でも、reviewBuilder.tsの型だけで合成した
+    // 2決断のReviewDataでensureFeaturesの「表示中のみ計算」挙動を検証できる。
+    const syntheticDecision2 = { ...baseReview.decisions[0], nodeId: 'synthetic-decision-2' }
+    const syntheticReview = { ...baseReview, decisions: [baseReview.decisions[0], syntheticDecision2] }
+    useGtoStore.setState({ review: syntheticReview, reviewFeatures: [null, null], reviewFeaturesStatus: 'idle' })
+
+    useGtoStore.getState().ensureFeatures(1)
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('computing')
+    expect(useGtoStore.getState().reviewFeatures[0]).toBeNull()
+
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeatures[1]).not.toBeNull()
+    expect(useGtoStore.getState().reviewFeatures[0]).toBeNull()
+  })
+
+  it('ensureFeaturesは計算済みのidxを再計算しない(no-op)', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('ready')
+
+    useGtoStore.getState().ensureFeatures(0)
+    // 既にreviewFeatures[0]が計算済みなので即returnし、'computing'には戻らない。
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('ready')
+  })
+
+  it('reviewが無い状態、または範囲外のidxを渡した場合ensureFeaturesは何もしない', () => {
+    useGtoStore.getState().ensureFeatures(0)
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('idle')
+  })
+
+  it('setActiveDecisionIdxはactiveDecisionIdxを更新すると同時に、そのidxのensureFeaturesをキックする', async () => {
+    await useGtoStore.getState().startNewSpot()
+    const spot = useGtoStore.getState().spot
+    if (!spot) throw new Error('spot should be set')
+    useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    await waitForReviewFeatures()
+    const baseReview = useGtoStore.getState().review
+    if (!baseReview) throw new Error('review should be set')
+
+    const alreadyComputedFeatures = useGtoStore.getState().reviewFeatures[0]
+    const syntheticDecision2 = { ...baseReview.decisions[0], nodeId: 'synthetic-decision-2' }
+    const syntheticReview = { ...baseReview, decisions: [baseReview.decisions[0], syntheticDecision2] }
+    useGtoStore.setState({ review: syntheticReview, reviewFeatures: [alreadyComputedFeatures, null] })
+
+    useGtoStore.getState().setActiveDecisionIdx(1)
+    expect(useGtoStore.getState().activeDecisionIdx).toBe(1)
+    expect(useGtoStore.getState().reviewFeaturesStatus).toBe('computing')
+
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeatures[1]).not.toBeNull()
+  })
+
   it('計算完了前に次のスポットへ進んでも、古いreviewFeatures計算結果が新しいreviewへ混入しない', async () => {
     await useGtoStore.getState().startNewSpot()
     const firstSpot = useGtoStore.getState().spot

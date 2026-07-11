@@ -15,6 +15,7 @@ import { FLOPS } from '../data/flops'
 import { buildStreetTree } from '../tree/actionTree'
 import { cardKey } from '../../engine/deck'
 import type { FlopDef } from '../types'
+import type { Card } from '../../engine/types'
 
 const FLOP_STR = 'AsQsJs'
 
@@ -234,6 +235,49 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.blockers.valueCombosReducedPct).toBeGreaterThanOrEqual(0)
       expect(features.blockers.valueCombosReducedPct).toBeLessThanOrEqual(100)
       expect(features.blockers.blockedExamples.length).toBeLessThanOrEqual(3)
+    })
+  })
+
+  describe('P6 B6: ターン/リバー決断(boardAtDecisionが4/5枚)', () => {
+    // FullHandController(B5)統合前でも、reviewBuilder.tsの型(Street拡張・
+    // boardAtDecision、B1で追加済み)だけで合成したターン/リバー決断により、
+    // computeSpotFeaturesがboard.length===3前提を残していないことを検証できる。
+    const turnCard: Card = { rank: 2, suit: 'c' }
+    const riverCards: Card[] = [
+      { rank: 2, suit: 'c' },
+      { rank: 3, suit: 'c' },
+    ]
+
+    it('boardAtDecisionが4枚(ターン)でもエラーなくfeaturesを計算できる', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = spot.decodedNode.actionLabels[0]
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const turnDecision = { ...review.decisions[0], street: 'turn' as const, boardAtDecision: [...review.board, turnCard] }
+      const turnReview = { ...review, decisions: [turnDecision] }
+
+      const features = computeSpotFeatures(turnReview, 0)
+
+      expect(features.handClass).toBeDefined()
+      expect(features.eqPercentileInRange).toBeGreaterThanOrEqual(0)
+      expect(features.eqPercentileInRange).toBeLessThanOrEqual(100)
+      expect(Number.isFinite(features.heroComboEquity)).toBe(true)
+    })
+
+    it('boardAtDecisionが5枚(リバー)でもエラーなくfeaturesを計算できる', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = spot.decodedNode.actionLabels[0]
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const riverDecision = { ...review.decisions[0], street: 'river' as const, boardAtDecision: [...review.board, ...riverCards] }
+      const riverReview = { ...review, decisions: [riverDecision] }
+
+      const features = computeSpotFeatures(riverReview, 0)
+
+      expect(features.handClass).toBeDefined()
+      expect(features.eqPercentileInRange).toBeGreaterThanOrEqual(0)
+      expect(features.eqPercentileInRange).toBeLessThanOrEqual(100)
+      expect(Number.isFinite(features.heroComboEquity)).toBe(true)
     })
   })
 })

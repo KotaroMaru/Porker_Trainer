@@ -24,6 +24,18 @@ function actionJa(label: string): string {
   return ACTION_LABEL_JA[label] ?? label
 }
 
+// ui/gto/labels.tsのSTREET_LABEL_JAと同内容だが、gto/はui/に依存しない方針
+// (ACTION_LABEL_JA同様、既存の意図的な重複)のためここにも定義する。
+const STREET_LABEL_JA: Record<ReviewDecision['street'], string> = {
+  flop: 'フロップ',
+  turn: 'ターン',
+  river: 'リバー',
+}
+
+function streetJa(street: ReviewDecision['street']): string {
+  return STREET_LABEL_JA[street] ?? street
+}
+
 function pct(v: number): string {
   return (v * 100).toFixed(1) + '%'
 }
@@ -100,6 +112,8 @@ export function buildSpotMarkdown(review: ReviewData, decisionIdx: number, featu
     ...historyLines,
     '',
     '## この決断',
+    `ストリート: ${streetJa(decision.street)}`,
+    `この決断時点のボード: ${decision.boardAtDecision.map(cardLabel).join(' ')}`,
     `手番: ${heroLabel}(相手: ${villainLabel})`,
     `選択したアクション: ${actionJa(decision.chosenLabel)}`,
     `判定: ${decision.grading.verdict}(EVロス ${decision.grading.evLossBb.toFixed(2)}bb、最善手: ${actionJa(decision.grading.bestLabel)})`,
