@@ -1,0 +1,141 @@
+import { describe, it, expect } from 'vitest'
+import { createInProcessProviderFactory } from './inProcessProviderFactory'
+import { buildTurnSubgameTree, buildStreetTree } from '../tree/actionTree'
+import type { Card } from '../../engine/types'
+import type { Combo } from '../../analysis/range'
+
+function card(rank: Card['rank'], suit: Card['suit']): Card {
+  return { rank, suit }
+}
+
+// 小さめのレンジ・浅いスタックで木を小さく保ち、低イテレーションで高速に検証する。
+const board4: Card[] = [card(13, 'c'), card(11, 'c'), card(2, 'd'), card(10, 's')]
+const board5: Card[] = [...board4, card(4, 'h')]
+const oopCombos: Combo[] = [
+  [card(14, 'h'), card(14, 's')],
+  [card(9, 'd'), card(9, 'h')],
+]
+const oopReach = [1, 1]
+const ipCombos: Combo[] = [
+  [card(8, 'h'), card(7, 'h')],
+  [card(6, 'd'), card(5, 'd')],
+]
+const ipReach = [1, 1]
+
+describe('createInProcessProviderFactory', () => {
+  it('forLiveStreet(turn)のrootノードのactionLabelsがローカル構築の街木と一致する', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'turn',
+      board: board4,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+    await provider.ready
+
+    const expectedTree = buildTurnSubgameTree({ turnPotBb: 5.5, effectiveStackBb: 20, firstToAct: 0, deadCards: board4 })
+    if (expectedTree.kind !== 'decision') throw new Error('expected decision root')
+
+    const nodes = await provider.getNodes([''])
+    const root = nodes.get('')
+    expect(root).not.toBeNull()
+    expect(root!.actionLabels).toEqual(expectedTree.actionLabels)
+    expect(root!.player).toBe(0)
+
+    factory.dispose()
+  })
+
+  it('forLiveStreet(river)のrootノードのactionLabelsがローカル構築の街木と一致する', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'river',
+      board: board5,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+    await provider.ready
+
+    const expectedTree = buildStreetTree({ potBb: 5.5, effectiveStackBb: 20, firstToAct: 0 })
+    if (expectedTree.kind !== 'decision') throw new Error('expected decision root')
+
+    const nodes = await provider.getNodes([''])
+    const root = nodes.get('')
+    expect(root).not.toBeNull()
+    expect(root!.actionLabels).toEqual(expectedTree.actionLabels)
+
+    factory.dispose()
+  })
+
+  it('terminalに到達するnodeId(木に存在しない)はnullを返す', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'turn',
+      board: board4,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+    await provider.ready
+
+    const nodes = await provider.getNodes(['check-check-check-check-check-check-check-check-check-check'])
+    expect(nodes.get('check-check-check-check-check-check-check-check-check-check')).toBeNull()
+
+    factory.dispose()
+  })
+
+  it('取得したノードのfreqsは手ごとに行和が1になる', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'turn',
+      board: board4,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+    await provider.ready
+
+    const nodes = await provider.getNodes([''])
+    const root = nodes.get('')!
+    const handCount = root.player === 0 ? oopCombos.length : ipCombos.length
+    for (let h = 0; h < handCount; h++) {
+      let sum = 0
+      for (let a = 0; a < root.actionLabels.length; a++) sum += root.freqs[a * handCount + h]
+      expect(sum).toBeCloseTo(1, 5)
+    }
+
+    factory.dispose()
+  })
+
+  it('progress()は常にnull(インプロセス実装は同期完了のため)', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'turn',
+      board: board4,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+    expect(provider.progress()).toBeNull()
+    await provider.ready
+    expect(provider.progress()).toBeNull()
+
+    factory.dispose()
+  })
+})
