@@ -67,6 +67,13 @@ export interface ChanceNode {
   /** 各枝が1枚のカードに対応(例: "Kc")。childrenと同じ順序・同じ長さ。 */
   cards: string[]
   children: TreeNode[]
+  /**
+   * このチャンスノードに到達した時点(=前のストリートのベッティング完了時点)で
+   * 各プレイヤーがそのストリートで投入していた額(bb)。ソルバー本体(walk等)は
+   * 使わない、trainer層のUI/簿記専用のオプションフィールド(buildTurnSubgameTree
+   * のリバー展開時のみ設定される)。DecisionNode.potBb/contributedBbと同じ位置づけ。
+   */
+  contributed?: [number, number]
 }
 
 export type TreeNode = TerminalNode | DecisionNode | ChanceNode

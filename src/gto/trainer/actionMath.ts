@@ -8,7 +8,9 @@ import type { DecisionNode, PlayerIdx, TreeNode } from '../solver/cfr'
 function contributedAt(node: TreeNode, player: PlayerIdx): number | undefined {
   if (node.kind === 'terminal') return node.contributed[player]
   if (node.kind === 'decision') return node.contributedBb?.[player]
-  return undefined // ChanceNodeはbuildStreetTree単体の木には出現しない(P4フロップ単発の範囲外)
+  // ChanceNode: buildTurnSubgameTreeのリバー展開でのみ出現。前のストリートの
+  // ベッティング完了時点の投入額をcontributedとして刻印済み(actionTree.ts参照)。
+  return node.contributed?.[player]
 }
 
 /**

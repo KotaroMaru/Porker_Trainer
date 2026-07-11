@@ -144,3 +144,15 @@ export function pickWeightedScenario(pool: Scenario[] = SCENARIOS): Scenario {
   }
   return pool[pool.length - 1]
 }
+
+/**
+ * プリフロップで各プレイヤーが投入した額(bb、両者とも同額)。P6の通しモードで
+ * ハンド全体の収支(±bb)を計算する際に使う。SRP=オープンサイズ(オープナーも
+ * ディフェンダーも同額)、3bet=3betサイズ(オープナーがコール・3ベッターが
+ * 投入、どちらも同額)。デッドブラインド(フォールドしたポジションの没収分)は
+ * どちらのプレイヤーの投入でもないため、potBbから逆算せずeffectiveStackBbの
+ * 差分から直接導出する(scenarios.tsの構築ロジックとの唯一の正典)。
+ */
+export function preflopContribPerPlayerBb(scenario: Scenario): number {
+  return Math.round((STARTING_STACK_BB - scenario.effectiveStackBb) * 100) / 100
+}

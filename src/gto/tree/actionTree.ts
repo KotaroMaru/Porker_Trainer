@@ -280,7 +280,7 @@ function buildRiverChanceNode(turnTerminal: TerminalNode, opts: TurnSubgameOptio
     return finalizeRiverTerminals(riverTree, turnTerminal.contributed, fullBoard)
   })
 
-  return { kind: 'chance', cards: cardLabels, children }
+  return { kind: 'chance', cards: cardLabels, children, contributed: turnTerminal.contributed }
 }
 
 function expandTurnShowdownsToRiver(node: TreeNode, opts: TurnSubgameOptions): TreeNode {
