@@ -44,7 +44,15 @@ describe('RangeHeatGrid', () => {
     const { container } = render(<RangeHeatGrid combos={combos} weights={weights} node={node} />)
     const aaCell = container.querySelector('[data-hand="AA"]')
     expect(aaCell).not.toBeNull()
-    expect(aaCell!.children.length).toBe(2) // check帯 + bet33帯
+    expect(aaCell!.children.length).toBe(3) // check帯 + bet33帯 + ハンドラベル
+  })
+
+  it('セルにはハンド表記のラベルテキストが表示される', () => {
+    const { container } = render(<RangeHeatGrid combos={combos} weights={weights} node={node} />)
+    const aaCell = container.querySelector('[data-hand="AA"]')
+    const emptyCell = container.querySelector('[data-hand="72o"]')
+    expect(aaCell!.textContent).toBe('AA')
+    expect(emptyCell!.textContent).toBe('72o')
   })
 
   it('highlightHandで指定したセルにgoldのoutlineが付く', () => {
@@ -55,9 +63,9 @@ describe('RangeHeatGrid', () => {
     expect(kkCell.style.outline).not.toContain('var(--gold)')
   })
 
-  it('レンジ外セルには色帯が描画されない(子要素0件)', () => {
+  it('レンジ外セルには色帯が描画されない(ラベルのみ1件)', () => {
     const { container } = render(<RangeHeatGrid combos={combos} weights={weights} node={node} />)
     const emptyCell = container.querySelector('[data-hand="72o"]')
-    expect(emptyCell!.children.length).toBe(0)
+    expect(emptyCell!.children.length).toBe(1) // ハンドラベルのみ
   })
 })

@@ -119,6 +119,22 @@ export function RangeHeatGrid({ combos, weights, node, highlightHand, cellSize =
                       />
                     )
                   })}
+                  <span
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 7.5,
+                      fontWeight: 600,
+                      pointerEvents: 'none',
+                      color: visibleMix.length > 0 ? '#fff' : 'var(--text-dim)',
+                      textShadow: visibleMix.length > 0 ? '0 0 3px rgba(0,0,0,0.9)' : 'none',
+                    }}
+                  >
+                    {hand}
+                  </span>
                 </div>
               )
             })}
