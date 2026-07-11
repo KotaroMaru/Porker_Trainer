@@ -1,41 +1,53 @@
 import type { Card } from '../../engine/types'
 import type { PlayerIdx } from '../solver/cfr'
+import type { DecodedNode } from '../loader/binaryFormat'
 
 /**
  * Worker境界を越える(structured cloneされる)ためのプレーンなデータ型のみで構成する。
- * cfr.tsのCfrSolutionはgetStrategyがクロージャを持つため直接は送れず、
- * SerializedSolutionに変換してから送る(solverWorker.ts参照)。
+ * cfr.tsのCfrSolutionはgetStrategyがクロージャを持つため直接は送れない。
+ *
+ * P6 Step B3(プロトコルv2): 旧v1はsolveTurnSubgame1回で全決断ノード(ターン部分
+ * ゲームで約11k)の戦略を丸ごとシリアライズしていた(潜在的性能バグ、EVを足すと
+ * 数十MB級になる)。v2はWorkerが最新1ソルブの解を保持し(D2「収穫」パターン)、
+ * UIはgetNodesで実際に必要なノード(手番決断+その応答子、1ハンドあたり数個)
+ * だけを個別取得する。DecodedNode(loader/binaryFormat.ts、Rust事前計算パイプラインと
+ * 同じ形状)をそのまま使うことで、grading.gradeDecision等の下流モジュールが
+ * 事前計算/ライブソルブのどちらのデータでも無改造で動く。
  */
 
-export interface SolveTurnSubgameRequest {
-  kind: 'solveTurnSubgame'
+export interface SolveStreetRequest {
+  kind: 'solveStreet'
   requestId: string
-  /** フロップ+ターンの4枚 */
+  street: 'turn' | 'river'
+  /** ターンなら4枚、リバーなら5枚。 */
   board: Card[]
-  heroCombos: [Card, Card][]
-  heroReach: number[]
-  villainCombos: [Card, Card][]
-  villainReach: number[]
-  turnPotBb: number
+  oopCombos: [Card, Card][]
+  oopReach: number[]
+  ipCombos: [Card, Card][]
+  ipReach: number[]
+  potBb: number
   effectiveStackBb: number
+  /** アプリコードでは常に0(OOP先手)。D1のプレイヤー番号規約。 */
   firstToAct: PlayerIdx
   maxIterations?: number
   targetExploitability?: number
 }
 
-export type WorkerRequest = SolveTurnSubgameRequest | { kind: 'cancel'; requestId: string }
-
-export interface SerializedNodeStrategy {
-  actionLabels: string[]
-  frequencies: number[][]
+export interface GetNodesRequest {
+  kind: 'getNodes'
+  requestId: string
+  /** solveStreetの結果で受け取ったsolveId。直近のソルブ以外を要求するとエラーになる。 */
+  solveId: string
+  nodeIds: string[]
 }
 
-export interface SerializedSolution {
+export type WorkerRequest = SolveStreetRequest | GetNodesRequest | { kind: 'cancel'; requestId: string }
+
+export interface SolveResultSummary {
+  solveId: string
   iterationsRun: number
   exploitability: number
   gameValue: [number, number]
-  /** nodeId(tree/nodeId.tsのbuildNodeId形式) -> その決断ノードの平均戦略 */
-  strategies: Record<string, SerializedNodeStrategy>
 }
 
 export interface ProgressMessage {
@@ -48,8 +60,15 @@ export interface ProgressMessage {
 export interface ResultMessage {
   kind: 'result'
   requestId: string
-  solution: SerializedSolution
+  solution: SolveResultSummary
   elapsedMs: number
+}
+
+export interface NodesMessage {
+  kind: 'nodes'
+  requestId: string
+  /** nodeId -> DecodedNode形状(木に存在しないnodeId=terminal等はnull)。 */
+  nodes: Record<string, DecodedNode | null>
 }
 
 export interface ErrorMessage {
@@ -58,4 +77,4 @@ export interface ErrorMessage {
   message: string
 }
 
-export type WorkerResponse = ProgressMessage | ResultMessage | ErrorMessage
+export type WorkerResponse = ProgressMessage | ResultMessage | NodesMessage | ErrorMessage
