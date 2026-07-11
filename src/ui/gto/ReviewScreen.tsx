@@ -6,7 +6,7 @@
 // P5は常にreview.decisions.length===1だが、①②のナビゲータ/ステッパーは
 // 複数決断を前提に実装してあり、P6の通しモードでそのまま機能する。
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useGtoStore } from '../../gto/store'
 import { buildExplanation } from '../../gto/explain/templates'
 import { buildSpotMarkdown } from '../../gto/explain/exportSpot'
@@ -24,8 +24,21 @@ function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
 }
 
 export function ReviewScreen() {
-  const { review, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, nextSpot } = useGtoStore()
+  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark } =
+    useGtoStore()
   const [copied, setCopied] = useState(false)
+  const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle')
+
+  // 別のreviewへ切り替わったら(次のハンド/別ブックマークを開く等)、前回の保存フィードバックを引きずらない。
+  useEffect(() => {
+    setSaveState('idle')
+  }, [review])
+
+  function handleSave() {
+    const result = saveCurrentReview()
+    if (!result) return
+    setSaveState(result.ok ? 'saved' : 'error')
+  }
 
   if (!review) return null // graded状態では常にreviewが設定されている(store側の不変条件)
 
@@ -225,17 +238,44 @@ export function ReviewScreen() {
         </>
       )}
 
-      {/* 8. 保存(P6実装予定・disabled)+次のハンド */}
-      <div style={{ display: 'flex', gap: 8 }}>
-        <button disabled title="P6で実装予定" style={{ flex: 1, padding: 10, opacity: 0.4, cursor: 'not-allowed', borderRadius: 8, border: '1px solid var(--panel-border)' }}>
-          ハンドを保存
-        </button>
-        <button
-          onClick={() => void nextSpot()}
-          style={{ flex: 2, padding: 10, fontWeight: 600, background: 'var(--green-mid)', border: '1px solid var(--green-light)', borderRadius: 8, color: 'var(--gold-light)' }}
-        >
-          次のハンド
-        </button>
+      {/* 8. 保存+次のハンド(reviewSource==='bookmark'時は「一覧へ戻る」に差し替え) */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {saveState === 'error' && (
+          <div style={{ fontSize: 12, color: 'var(--red)', textAlign: 'center' }}>保存容量が一杯です。古いブックマークを削除してください。</div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={handleSave}
+            disabled={saveState === 'saved' || reviewSource === 'bookmark'}
+            style={{
+              flex: 1,
+              padding: 10,
+              borderRadius: 8,
+              border: '1px solid var(--panel-border)',
+              background: saveState === 'saved' ? 'var(--panel-bg)' : 'var(--panel-bg-light)',
+              color: saveState === 'saved' ? 'var(--green-light)' : 'var(--text)',
+              opacity: reviewSource === 'bookmark' ? 0.5 : 1,
+              cursor: saveState === 'saved' || reviewSource === 'bookmark' ? 'default' : 'pointer',
+            }}
+          >
+            {reviewSource === 'bookmark' ? '保存済み' : saveState === 'saved' ? '保存済み' : 'ハンドを保存'}
+          </button>
+          {reviewSource === 'bookmark' ? (
+            <button
+              onClick={() => closeBookmark()}
+              style={{ flex: 2, padding: 10, fontWeight: 600, background: 'var(--green-mid)', border: '1px solid var(--green-light)', borderRadius: 8, color: 'var(--gold-light)' }}
+            >
+              一覧へ戻る
+            </button>
+          ) : (
+            <button
+              onClick={() => void nextSpot()}
+              style={{ flex: 2, padding: 10, fontWeight: 600, background: 'var(--green-mid)', border: '1px solid var(--green-light)', borderRadius: 8, color: 'var(--gold-light)' }}
+            >
+              次のハンド
+            </button>
+          )}
+        </div>
       </div>
     </div>
   )

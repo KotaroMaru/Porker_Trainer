@@ -1,13 +1,14 @@
-import { useState } from 'react'
+import { useGtoStore, type GtoTab } from '../../gto/store'
 import { PlayScreen } from './PlayScreen'
 import { SettingsScreen } from './SettingsScreen'
+import { BookmarksScreen } from './BookmarksScreen'
 
-// P4 Step D: サブ画面切替(QuizViewパターン、ローカルuseState管理)。
-// P4は'play'のみ実装。P6 Step B9でsettingsを実装。review/bookmarksはP6 B10以降のプレースホルダ。
+// P4 Step D: サブ画面切替(QuizViewパターン)。
+// P4は'play'のみ実装。P6 Step B9でsettingsを実装、B10でbookmarksを実装。
+// P6 Step B10: タブ状態はローカルuseStateからstoreのactiveTabへ引き上げた
+// (openBookmark/closeBookmarkがpropコールバックの受け渡し無しで直接タブ遷移できるようにするため)。
 
-type GtoMode = 'play' | 'review' | 'bookmarks' | 'settings'
-
-const MODE_LABELS: Record<GtoMode, string> = {
+const MODE_LABELS: Record<GtoTab, string> = {
   play: 'プレイ',
   review: 'レビュー',
   bookmarks: '保存済み',
@@ -15,24 +16,24 @@ const MODE_LABELS: Record<GtoMode, string> = {
 }
 
 export function GtoTrainerView() {
-  const [mode, setMode] = useState<GtoMode>('play')
+  const { activeTab, setActiveTab } = useGtoStore()
 
   return (
     <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto', width: '100%' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 style={{ color: 'var(--gold)', fontSize: 18, flexShrink: 0 }}>GTO練習</h2>
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 1, paddingBottom: 2 }}>
-          {(['play', 'review', 'bookmarks', 'settings'] as GtoMode[]).map((m) => (
+          {(['play', 'review', 'bookmarks', 'settings'] as GtoTab[]).map((m) => (
             <button
               key={m}
-              onClick={() => setMode(m)}
+              onClick={() => setActiveTab(m)}
               style={{
-                background: mode === m ? 'var(--green-mid)' : 'transparent',
-                color: mode === m ? 'var(--gold-light)' : 'var(--text-muted)',
+                background: activeTab === m ? 'var(--green-mid)' : 'transparent',
+                color: activeTab === m ? 'var(--gold-light)' : 'var(--text-muted)',
                 padding: '6px 14px',
                 fontSize: 13.5,
-                fontWeight: mode === m ? 600 : 400,
-                border: '1px solid ' + (mode === m ? 'var(--green-light)' : 'var(--panel-border)'),
+                fontWeight: activeTab === m ? 600 : 400,
+                border: '1px solid ' + (activeTab === m ? 'var(--green-light)' : 'var(--panel-border)'),
                 borderRadius: 6,
               }}
             >
@@ -42,11 +43,12 @@ export function GtoTrainerView() {
         </div>
       </div>
 
-      {mode === 'play' && <PlayScreen />}
-      {mode === 'settings' && <SettingsScreen />}
-      {mode !== 'play' && mode !== 'settings' && (
+      {activeTab === 'play' && <PlayScreen />}
+      {activeTab === 'settings' && <SettingsScreen />}
+      {activeTab === 'bookmarks' && <BookmarksScreen />}
+      {activeTab === 'review' && (
         <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>
-          {MODE_LABELS[mode]}はまだ実装されていません(今後のフェーズで追加予定)。
+          {MODE_LABELS[activeTab]}はまだ実装されていません(今後のフェーズで追加予定)。
         </div>
       )}
     </div>

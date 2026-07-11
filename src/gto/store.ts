@@ -31,6 +31,7 @@ import { FullHandController, type FullHandSnapshot } from './trainer/fullHandFlo
 import { createWorkerProviderFactory } from './worker/workerProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
 import { loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from './settings'
+import { saveBookmark, loadBookmark, type SaveBookmarkResult } from './bookmarks/storage'
 import type { GradeResult } from './trainer/grading'
 import type { Scenario, FlopDef } from './types'
 
@@ -58,6 +59,11 @@ export function selectFlopPool(flops: readonly FlopDef[], availableFlopIds: read
 
 export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | 'botThinking' | 'handOver'
 export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
+/** GtoTrainerViewのサブ画面タブ。P6 B10からstoreへ引き上げた(openBookmark/closeBookmarkが
+ *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。 */
+export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings'
+/** 表示中のreviewの由来。'bookmark'ならReviewScreenの「次のハンド」を「一覧へ戻る」に差し替える。 */
+export type ReviewSource = 'live' | 'bookmark'
 
 export interface SessionTally {
   spots: number
@@ -108,6 +114,9 @@ export interface GtoState {
   setMode: (mode: GtoMode) => void
   setScenarioEnabled: (id: string, enabled: boolean) => void
 
+  activeTab: GtoTab
+  setActiveTab: (tab: GtoTab) => void
+
   /** シナリオID→生成済みフロップID配列。未ロードの間はnull(GTOタブ初回マウントでloadAvailability()を呼ぶ想定)。 */
   availability: Map<string, string[]> | null
   /** 未ロードなら1回だけdetectAvailabilityを実行してキャッシュする(セッション内メモリ保持、多重ロード防止)。 */
@@ -118,14 +127,23 @@ export interface GtoState {
   /** 通しモード内部コントローラの参照(dispose/chooseAction委譲用)。単発モードでは常にnull。 */
   fullHandController: FullHandController | null
 
-  /** レビュー画面用データ。単発:chooseAction直後/通し:openReviewFromResult直後に構築される。 */
+  /** レビュー画面用データ。単発:chooseAction直後/通し:openReviewFromResult直後/保存済み:openBookmark直後に構築される。 */
   review: ReviewData | null
+  /** reviewが今表示中のライブ採点結果か、保存済みブックマークを開いたものか。 */
+  reviewSource: ReviewSource
   /** review.decisionsと同じ長さ。未計算の間はnull。 */
   reviewFeatures: (SpotFeatures | null)[]
   reviewFeaturesStatus: ReviewFeaturesStatus
   /** レビューのステッパー現在位置。 */
   activeDecisionIdx: number
   setActiveDecisionIdx: (i: number) => void
+
+  /** 表示中のreviewをブックマーク保存する。review自体が無ければnull。 */
+  saveCurrentReview: () => SaveBookmarkResult | null
+  /** 保存済みブックマークを開き、reviewSource:'bookmark'としてレビュー画面(playタブ)へ遷移する。 */
+  openBookmark: (id: string) => void
+  /** ブックマーク表示を終了し、保存済み一覧タブへ戻る。 */
+  closeBookmark: () => void
 
   /**
    * reviewFeatures[idx]が未計算なら計算をキックする(表示中の決断のみオンデマンド計算、
@@ -148,6 +166,9 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   chosenLabel: null,
   errorMessage: null,
   sessionTally: initialTally(),
+
+  activeTab: 'play',
+  setActiveTab: (tab: GtoTab) => set({ activeTab: tab }),
 
   settings: loadGtoSettings(),
   setMode: (mode: GtoMode) => {
@@ -185,12 +206,44 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   fullHandController: null,
 
   review: null,
+  reviewSource: 'live',
   reviewFeatures: [],
   reviewFeaturesStatus: 'idle',
   activeDecisionIdx: 0,
   setActiveDecisionIdx: (i: number) => {
     set({ activeDecisionIdx: i })
     get().ensureFeatures(i)
+  },
+
+  saveCurrentReview: () => {
+    const { review, settings, fullHand } = get()
+    if (!review) return null
+    const netBb = settings.mode === 'full' ? (fullHand?.result?.userNetBb ?? null) : null
+    return saveBookmark(review, { mode: settings.mode, netBb })
+  },
+  openBookmark: (id: string) => {
+    const review = loadBookmark(id)
+    if (!review) return
+    set({
+      status: 'graded',
+      review,
+      reviewSource: 'bookmark',
+      reviewFeatures: new Array(review.decisions.length).fill(null),
+      reviewFeaturesStatus: 'idle',
+      activeDecisionIdx: 0,
+      activeTab: 'play',
+    })
+    get().ensureFeatures(0)
+  },
+  closeBookmark: () => {
+    set({
+      review: null,
+      reviewSource: 'live',
+      reviewFeatures: [],
+      reviewFeaturesStatus: 'idle',
+      activeDecisionIdx: 0,
+      activeTab: 'bookmarks',
+    })
   },
 
   ensureFeatures: (idx: number) => {
@@ -233,6 +286,7 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       fullHand: null,
       fullHandController: null,
       review: null,
+      reviewSource: 'live',
       reviewFeatures: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
@@ -301,6 +355,7 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       chosenLabel: label,
       sessionTally: nextTally,
       review,
+      reviewSource: 'live',
       reviewFeatures: new Array(review.decisions.length).fill(null),
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
@@ -328,6 +383,7 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       status: 'graded',
       sessionTally: nextTally,
       review,
+      reviewSource: 'live',
       reviewFeatures: new Array(review.decisions.length).fill(null),
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,

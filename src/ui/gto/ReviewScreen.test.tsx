@@ -97,8 +97,8 @@ describe('ReviewScreen', () => {
     expect(screen.getByText('エクイティ分布')).toBeInTheDocument()
     expect(screen.getByText('ブロッカー分析')).toBeInTheDocument()
 
-    // ⑧ 保存(disabled)+次のハンド
-    expect(screen.getByText('ハンドを保存')).toBeDisabled()
+    // ⑧ 保存(P6 B10で有効化・reviewSource==='live'なので押せる)+次のハンド
+    expect(screen.getByText('ハンドを保存')).not.toBeDisabled()
     expect(screen.getByText('次のハンド')).toBeInTheDocument()
   })
 

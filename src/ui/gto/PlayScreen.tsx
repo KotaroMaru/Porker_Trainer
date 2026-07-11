@@ -40,13 +40,9 @@ function SingleSpotPlayScreen() {
     )
   }
 
-  if ((status === 'idle' || status === 'loading') && !spot) {
-    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>読み込み中...</div>
-  }
-
-  if (!spot) return null
-
   if (status === 'graded') {
+    // ブックマークを開いた場合はspotがnull(通常の単発フローを経由していない)ため、
+    // 下のspotガードより必ず先にこの分岐へ来る必要がある。
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <ReviewScreen />
@@ -56,6 +52,12 @@ function SingleSpotPlayScreen() {
       </div>
     )
   }
+
+  if ((status === 'idle' || status === 'loading') && !spot) {
+    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>読み込み中...</div>
+  }
+
+  if (!spot) return null
 
   const oopIsRaiser = isOopPosition(spot.scenario.raiser.position, spot.scenario.defender.position)
   const oopPosition = oopIsRaiser ? spot.scenario.raiser.position : spot.scenario.defender.position
@@ -206,18 +208,13 @@ function FullHandPlayScreen() {
     )
   }
 
-  if ((status === 'idle' || status === 'loading') && !fullHand) {
-    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>読み込み中...</div>
-  }
-
-  if (!fullHand) return null
-
   if (status === 'graded') {
-    // openReviewFromResult()呼び出し後: 単発モードと共通のReviewScreenへ合流する
-    // (ReviewScreen.tsxはモードを意識せずstore.reviewだけを見て描画する)。
-    // fullHand.phaseは openReviewFromResult() 後も'over'のまま(fullHandはハンド終了時の
-    // スナップショットとして保持され続ける)なので、必ずこのstatusチェックを
-    // fullHand.phase==='over'チェックより先に行う(でないとレビューへ遷移できなくなる)。
+    // openReviewFromResult()呼び出し後、またはブックマークを開いた場合(この場合fullHandは
+    // nullのまま)に到達する。単発モードと共通のReviewScreenへ合流する(ReviewScreen.tsxは
+    // モードを意識せずstore.reviewだけを見て描画する)。fullHand.phaseは
+    // openReviewFromResult()後も'over'のまま保持され続けるため、必ずこのstatusチェックを
+    // fullHand.phase==='over'チェック・下のfullHandガードより先に行う(でないとレビューへ
+    // 遷移できなくなる/ブックマークを開いた際に空白になる、実際に踏んだバグ)。
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <ReviewScreen />
@@ -225,6 +222,12 @@ function FullHandPlayScreen() {
       </div>
     )
   }
+
+  if ((status === 'idle' || status === 'loading') && !fullHand) {
+    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>読み込み中...</div>
+  }
+
+  if (!fullHand) return null
 
   if (fullHand.phase === 'over') {
     return (
