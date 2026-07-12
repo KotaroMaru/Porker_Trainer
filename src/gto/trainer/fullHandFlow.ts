@@ -130,6 +130,17 @@ interface PendingUserDecision {
 
 const NEAR_ZERO_BB = 1e-6
 
+/**
+ * P7-6a: プレイ中にボットが行動するために必要な最低限の粗さでターンをソルブする
+ * (UX優先度①「計算待ちを最小に」)。実測(checkEveryIterations=25のベンチ)で
+ * iter75/checkEvery25は典型~4秒・上限~11秒で4%程度の収束に達する。採点の精度は
+ * ハンド終了後のバックグラウンド精密リファイン(REFINE_SOLVE、P7-6b)で別途補う
+ * (UX優先度②)。ボット行動の品質はここでは最下位優先度③として明示的に妥協する。
+ */
+const TURN_PLAY_SOLVE = { maxIterations: 75, targetExploitability: 0.04, checkEveryIterations: 25 }
+/** リバーは木が小さくソルブが高速なため、プレイ時から精密な収束のままでよい。 */
+const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
+
 /** weight>0のコンボからdeadCardと衝突するものを除いて再正規化する(ターン/リバーへの遷移時に使う)。 */
 function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {
   const outCombos: Combo[] = []
@@ -493,6 +504,7 @@ export class FullHandController {
     // 呼び出し元(advance())はterminal/chance両分岐とも、この関数に入る前に
     // remainingStackBb - streetContributed の残りが実質ゼロ(オールイン成立)なら
     // 直接ランアウト側へ分岐するため、ここに到達する時点で必ず正の実効スタックが残っている。
+    const playSolve = nextStreet === 'turn' ? TURN_PLAY_SOLVE : RIVER_PLAY_SOLVE
     this.provider = this.deps.providerFactory.forLiveStreet({
       street: nextStreet,
       board: newBoard,
@@ -502,6 +514,7 @@ export class FullHandController {
       ipReach: filteredIp.weights,
       potBb: this.potBb,
       effectiveStackBb: this.remainingStackBb,
+      ...playSolve,
     })
 
     const tree =

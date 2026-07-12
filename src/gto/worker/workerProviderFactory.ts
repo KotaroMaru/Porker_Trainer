@@ -35,6 +35,7 @@ export function createWorkerProviderFactory(): NodeProviderFactory {
           firstToAct: 0,
           maxIterations: input.maxIterations,
           targetExploitability: input.targetExploitability,
+          checkEveryIterations: input.checkEveryIterations,
         },
         (iterationsRun) => {
           latestProgress = { fraction: Math.min(1, iterationsRun / maxIterations) }

@@ -120,6 +120,32 @@ describe('createInProcessProviderFactory', () => {
     factory.dispose()
   })
 
+  it('P7-6a: maxIterations/targetExploitability/checkEveryIterationsはopts(テストシーム)がinput(呼び出し側の実値)より優先される', () => {
+    // input側に「ほぼ止まらない」設定(反復上限が巨大・目標exploitabilityが0)を渡しても、
+    // opts側の小さいmaxIterations(20)で確実に打ち切られることを、実測時間の短さで確認する。
+    // 逆順(inputが勝つ)だとinput.maxIterations=100000まで回り、この閾値を大きく超える。
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05, checkEveryIterations: 5 })
+    const start = performance.now()
+    const provider = factory.forLiveStreet({
+      street: 'turn',
+      board: board4,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+      maxIterations: 100_000,
+      targetExploitability: 0,
+      checkEveryIterations: 1,
+    })
+    const elapsedMs = performance.now() - start
+    expect(elapsedMs).toBeLessThan(3000)
+
+    factory.dispose()
+    void provider
+  })
+
   it('progress()は常にnull(インプロセス実装は同期完了のため)', async () => {
     const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
     const provider = factory.forLiveStreet({

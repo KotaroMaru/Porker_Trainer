@@ -24,12 +24,19 @@ function comboCards(combo: Combo): string[] {
 export interface InProcessProviderFactoryOptions {
   maxIterations?: number
   targetExploitability?: number
+  checkEveryIterations?: number
 }
 
-/** maxIterationsを低く設定して高速化できる(既定は本番相当の500/0.5%pot)。 */
+/**
+ * maxIterationsを低く設定して高速化できる(既定は本番相当の500/0.5%pot)。
+ *
+ * P7-6a: 優先順は`opts`(このファクトリを構築したテストシーム側)が`input`
+ * (fullHandFlow.ts等が渡すプレイ用/リファイン用の実値、例えばTURN_PLAY_SOLVEの
+ * maxIterations:75)より**常に勝つ**。逆順だとテストが実運用の反復数をそのまま
+ * 使ってしまい遅くなる/収束が粗すぎて不安定になる。テストが意図的に本番相当の
+ * 値を検証したい場合はoptsを省略してinputをそのまま通す。
+ */
 export function createInProcessProviderFactory(opts?: InProcessProviderFactoryOptions): NodeProviderFactory {
-  const defaultMaxIterations = opts?.maxIterations ?? 500
-  const defaultTargetExploitability = opts?.targetExploitability ?? 0.005
 
   return {
     forFlop(solution, board) {
@@ -53,9 +60,9 @@ export function createInProcessProviderFactory(opts?: InProcessProviderFactoryOp
       }
 
       const solution = solveCfr(game, {
-        maxIterations: input.maxIterations ?? defaultMaxIterations,
-        targetExploitability: input.targetExploitability ?? defaultTargetExploitability,
-        checkEveryIterations: 50,
+        maxIterations: opts?.maxIterations ?? input.maxIterations ?? 500,
+        targetExploitability: opts?.targetExploitability ?? input.targetExploitability ?? 0.005,
+        checkEveryIterations: opts?.checkEveryIterations ?? input.checkEveryIterations ?? 50,
       })
       const getAvgStrategy = (node: DecisionNode) => solution.getStrategy(node).frequencies
       const evs = extractDecisionEvs(game, getAvgStrategy)

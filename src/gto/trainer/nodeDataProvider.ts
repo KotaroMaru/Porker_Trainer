@@ -44,6 +44,7 @@ export interface StreetSolveInput {
   effectiveStackBb: number
   maxIterations?: number
   targetExploitability?: number
+  checkEveryIterations?: number
 }
 
 export interface NodeProviderFactory {

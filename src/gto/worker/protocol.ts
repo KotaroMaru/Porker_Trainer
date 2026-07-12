@@ -31,6 +31,10 @@ export interface SolveStreetRequest {
   firstToAct: PlayerIdx
   maxIterations?: number
   targetExploitability?: number
+  /** exploitabilityチェック(収束判定)の間隔。小さいほど早期打ち切りの精度は上がるが
+   * チェック自体のコストが増える。P7-6a: プレイ用の粗いターンソルブは短い間隔(25)で
+   * ~4秒での打ち切りを狙う。 */
+  checkEveryIterations?: number
 }
 
 export interface GetNodesRequest {

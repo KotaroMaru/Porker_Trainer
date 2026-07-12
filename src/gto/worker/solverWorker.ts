@@ -90,7 +90,7 @@ function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>)
     const solution = solveCfr(game, {
       maxIterations: req.maxIterations ?? 500,
       targetExploitability: req.targetExploitability ?? 0.005,
-      checkEveryIterations: 50,
+      checkEveryIterations: req.checkEveryIterations ?? 50,
       onProgress: (iterationsRun, exploitability) => {
         const msg: WorkerResponse = { kind: 'progress', requestId, iterationsRun, exploitability }
         self.postMessage(msg)
