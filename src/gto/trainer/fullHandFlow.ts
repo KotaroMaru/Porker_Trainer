@@ -41,7 +41,7 @@ import { actionInvestmentsBb, actionLabelsWithAmounts } from './actionMath'
 import { buildPreflopScript } from './preflopScript'
 import { boardFromFlop, type Seat } from './gameFlow'
 import { initialWeightsInSolutionOrder, type HistoryEntry, type ReviewData, type ReviewDecision } from './reviewBuilder'
-import type { NodeProviderFactory, StreetNodeProvider } from './nodeDataProvider'
+import type { NodeProviderFactory, StreetNodeProvider, StreetSolveInput } from './nodeDataProvider'
 import { createPrecomputedProvider } from './precomputedProvider'
 
 export type FullHandStreet = 'flop' | 'turn' | 'river'
@@ -77,6 +77,12 @@ export interface FullHandSnapshot {
   actionsWithAmounts: { label: string; amountBb: number }[]
   history: HistoryEntry[]
   result: HandResult | null
+  /**
+   * P7-6b: ハンド終了後、ターンをバックグラウンド精密再ソルブ中かどうか。result確定後
+   * (phase==='over')のみtrueになりうる。完了するとfalseに戻り、resultのdecisionSummaries
+   * (とgetReview()が返す該当決断)が精密値に差し替わっている。
+   */
+  refining: boolean
   /**
    * 現在のストリートで各プレイヤーが直近に取ったアクション(0〜2件、行動した順ではなく
    * 常にOOP→IP順)。P7-2: プレイ中の場(フェルト)表示専用(「BB ベット4.1bb」等)。
@@ -128,6 +134,22 @@ interface PendingUserDecision {
   chosenLabel: string
 }
 
+/**
+ * P7-6b: ターン(プレイ用の粗いソルブで通過した街)をハンド終了後に精密再ソルブ・
+ * 再収穫するための素材。transitionToNextStreet/finalizeFold/finalizeShowdownが
+ * ターンの収穫(harvestStreet)を行う直前に退避する(harvestStreetはstreetActionLog等を
+ * クリアしてしまうため)。decisionStartIdxはリファイン後の決断をthis.decisionsの
+ * どこに差し戻すかを示す。
+ */
+interface StreetRefineMaterial {
+  solveInput: StreetSolveInput
+  actionLog: RecordedAction[]
+  userDecisions: PendingUserDecision[]
+  initialOopWeights: number[]
+  initialIpWeights: number[]
+  decisionStartIdx: number
+}
+
 const NEAR_ZERO_BB = 1e-6
 
 /**
@@ -140,6 +162,12 @@ const NEAR_ZERO_BB = 1e-6
 const TURN_PLAY_SOLVE = { maxIterations: 75, targetExploitability: 0.04, checkEveryIterations: 25 }
 /** リバーは木が小さくソルブが高速なため、プレイ時から精密な収束のままでよい。 */
 const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
+/**
+ * P7-6b: ハンド終了後、Workerが暇になった時点でターンをバックグラウンド精密再ソルブする
+ * ときの設定(UX優先度②「答え合わせをできるだけ正確に」)。従来の即時ソルブ版と同じ
+ * 収束目標(0.5%)にすることで、最終的な採点精度は変えない。
+ */
+const REFINE_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
 
 /** weight>0のコンボからdeadCardと衝突するものを除いて再正規化する(ターン/リバーへの遷移時に使う)。 */
 function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {
@@ -162,6 +190,98 @@ function dealCardExcluding(usedCards: readonly Card[], rng: () => number): Card 
   if (remaining.length === 0) throw new Error('dealCardExcluding: deck exhausted')
   const idx = Math.min(Math.floor(rng() * remaining.length), remaining.length - 1)
   return remaining[idx]
+}
+
+/**
+ * ある街で記録された行動列とユーザー決断を、指定のprovider(解の出所)を使って
+ * レンジ重み更新+ReviewDecision組み立てまで行う純粋寄りの処理。FullHandControllerの
+ * harvestStreet(プレイ中、instance stateを直接読み書き)と、P7-6bのリファイン
+ * (ハンド終了後、別providerで同じ処理を再実行)の両方から共用する(プランの
+ * 「収穫ロジックの共通化」)。
+ */
+async function computeStreetHarvest(params: {
+  provider: StreetNodeProvider
+  actionLog: RecordedAction[]
+  userDecisions: PendingUserDecision[]
+  initialOopWeights: number[]
+  initialIpWeights: number[]
+  userSeat: Seat
+  userCombo: Combo
+}): Promise<{ decisions: ReviewDecision[]; oopWeights: number[]; ipWeights: number[] }> {
+  const { provider, actionLog, userDecisions, userSeat, userCombo } = params
+  await provider.ready
+  const nodeIdsToFetch = new Set<string>()
+  for (const a of actionLog) nodeIdsToFetch.add(a.nodeId)
+  for (const d of userDecisions) {
+    for (const a of d.actionsWithAmounts) nodeIdsToFetch.add(childNodeId(d.nodeId, a.label))
+  }
+  const fetched = await provider.getNodes([...nodeIdsToFetch])
+
+  const oopCombos = provider.oopCombos
+  const ipCombos = provider.ipCombos
+  let oopW = params.initialOopWeights
+  let ipW = params.initialIpWeights
+
+  const snapshots = new Map<string, { heroWeights: number[]; villainWeights: number[] }>()
+  const userDecisionNodeIds = new Set(userDecisions.map((d) => d.nodeId))
+
+  for (const action of actionLog) {
+    if (userDecisionNodeIds.has(action.nodeId) && !snapshots.has(action.nodeId)) {
+      const heroWeights = userSeat === 0 ? [...oopW] : [...ipW]
+      const villainWeights = userSeat === 0 ? [...ipW] : [...oopW]
+      snapshots.set(action.nodeId, { heroWeights, villainWeights })
+    }
+    const decoded = fetched.get(action.nodeId)
+    if (!decoded) throw new Error(`computeStreetHarvest: missing decodedNode for nodeId="${action.nodeId}"`)
+    const handCount = decoded.player === 0 ? oopCombos.length : ipCombos.length
+    const actionIdx = decoded.actionLabels.indexOf(action.label)
+    if (actionIdx < 0) throw new Error(`computeStreetHarvest: action "${action.label}" not found at nodeId="${action.nodeId}"`)
+    const freqRow: number[] = []
+    for (let h = 0; h < handCount; h++) freqRow.push(decoded.freqs[actionIdx * handCount + h])
+    if (decoded.player === 0) oopW = updateRangeWeights(oopW, freqRow)
+    else ipW = updateRangeWeights(ipW, freqRow)
+  }
+
+  const decisions: ReviewDecision[] = []
+  for (const d of userDecisions) {
+    const decodedNode = fetched.get(d.nodeId)
+    if (!decodedNode) throw new Error(`computeStreetHarvest: missing decodedNode for user decision nodeId="${d.nodeId}"`)
+    const snap = snapshots.get(d.nodeId)
+    if (!snap) throw new Error(`computeStreetHarvest: missing weight snapshot for user decision nodeId="${d.nodeId}"`)
+
+    const heroCombos = userSeat === 0 ? oopCombos : ipCombos
+    const villainCombos = userSeat === 0 ? ipCombos : oopCombos
+
+    const responseNodes: ReviewDecision['responseNodes'] = []
+    for (const label of decodedNode.actionLabels) {
+      const childId = childNodeId(d.nodeId, label)
+      const node = fetched.get(childId)
+      if (node) responseNodes.push({ forLabel: label, nodeId: childId, node })
+    }
+
+    const comboIdx = lookupComboIndex(buildComboIndexMapFromCombos(heroCombos), userCombo)
+    const grading: GradeResult = gradeDecision(decodedNode, comboIdx, d.chosenLabel)
+
+    decisions.push({
+      street: d.street,
+      nodeId: d.nodeId,
+      seat: userSeat,
+      boardAtDecision: d.boardAtDecision,
+      chosenLabel: d.chosenLabel,
+      grading,
+      potBbAtDecision: d.potBbAtDecision,
+      effectiveStackRemainingBb: d.effectiveStackRemainingBb,
+      actionsWithAmounts: d.actionsWithAmounts,
+      decodedNode,
+      heroCombos: heroCombos as Combo[],
+      heroWeights: snap.heroWeights,
+      villainCombos: villainCombos as Combo[],
+      villainWeights: snap.villainWeights,
+      responseNodes,
+    })
+  }
+
+  return { decisions, oopWeights: oopW, ipWeights: ipW }
 }
 
 /**
@@ -201,6 +321,18 @@ export class FullHandController {
   private priorStreetsContributed: [number, number] = [0, 0]
   /** 現在のストリートで各プレイヤーが直近に取ったアクション(P7-2、場の表示専用)。街が変わるとクリアする。 */
   private latestActionBySeat: [LatestAction | null, LatestAction | null] = [null, null]
+
+  // P7-6b: ハンド終了後のバックグラウンド精密リファイン関連の状態
+  /** ターンのforLiveStreetに渡した実際のStreetSolveInput(リファイン時に同じ入力へREFINE_SOLVEを重ねて再ソルブする)。 */
+  private pendingTurnSolveInput: StreetSolveInput | null = null
+  /** ターンの街が終わった時点で退避したリファイン素材。無ければリファイン不要(ターンに到達しなかった等)。 */
+  private refineMaterial: StreetRefineMaterial | null = null
+  /** リファイン中かどうか(FullHandSnapshot.refiningとしてUIへ公開)。 */
+  private refining = false
+  /** リファイン用に一時的に開いているprovider(dispose()からのキャンセル対象)。 */
+  private activeRefineProvider: StreetNodeProvider | null = null
+  /** dispose()済みなら以後のemit/onErrorを抑止する(二重dispose・破棄後のstore更新を防ぐ)。 */
+  private disposed = false
 
   constructor(deps: FullHandControllerDeps) {
     this.deps = deps
@@ -243,6 +375,7 @@ export class FullHandController {
   }
 
   private emit(): void {
+    if (this.disposed) return // P7-6b: 破棄後のリファイン継続処理からのemitを抑止する
     const latestActions: FullHandSnapshot['latestActions'] = []
     for (const seat of [0, 1] as const) {
       const a = this.latestActionBySeat[seat]
@@ -258,6 +391,7 @@ export class FullHandController {
       actionsWithAmounts: this.phase === 'userTurn' && this.curNode.kind === 'decision' ? actionLabelsWithAmounts(this.curNode) : [],
       history: this.history,
       result: this.result,
+      refining: this.refining,
       latestActions,
       scenario: this.deps.scenario,
       flop: this.deps.flop,
@@ -397,80 +531,92 @@ export class FullHandController {
 
   /** このストリートで記録した全行動を再生してレンジ重みを更新し、ユーザー決断をReviewDecisionへ変換する。戻り値はこのストリート終了時点の最終重み。 */
   private async harvestStreet(): Promise<{ oopWeights: number[]; ipWeights: number[] }> {
-    await this.provider.ready
-    const nodeIdsToFetch = new Set<string>()
-    for (const a of this.streetActionLog) nodeIdsToFetch.add(a.nodeId)
-    for (const d of this.streetUserDecisions) {
-      for (const a of d.actionsWithAmounts) nodeIdsToFetch.add(childNodeId(d.nodeId, a.label))
-    }
-    const fetched = await this.provider.getNodes([...nodeIdsToFetch])
-
-    const oopCombos = this.provider.oopCombos
-    const ipCombos = this.provider.ipCombos
-    let oopW = this.streetInitialOopWeights
-    let ipW = this.streetInitialIpWeights
-
-    const snapshots = new Map<string, { heroWeights: number[]; villainWeights: number[] }>()
-    const userDecisionNodeIds = new Set(this.streetUserDecisions.map((d) => d.nodeId))
-
-    for (const action of this.streetActionLog) {
-      if (userDecisionNodeIds.has(action.nodeId) && !snapshots.has(action.nodeId)) {
-        const heroWeights = this.userSeat === 0 ? [...oopW] : [...ipW]
-        const villainWeights = this.userSeat === 0 ? [...ipW] : [...oopW]
-        snapshots.set(action.nodeId, { heroWeights, villainWeights })
-      }
-      const decoded = fetched.get(action.nodeId)
-      if (!decoded) throw new Error(`harvestStreet: missing decodedNode for nodeId="${action.nodeId}"`)
-      const handCount = decoded.player === 0 ? oopCombos.length : ipCombos.length
-      const actionIdx = decoded.actionLabels.indexOf(action.label)
-      if (actionIdx < 0) throw new Error(`harvestStreet: action "${action.label}" not found at nodeId="${action.nodeId}"`)
-      const freqRow: number[] = []
-      for (let h = 0; h < handCount; h++) freqRow.push(decoded.freqs[actionIdx * handCount + h])
-      if (decoded.player === 0) oopW = updateRangeWeights(oopW, freqRow)
-      else ipW = updateRangeWeights(ipW, freqRow)
-    }
-
-    for (const d of this.streetUserDecisions) {
-      const decodedNode = fetched.get(d.nodeId)
-      if (!decodedNode) throw new Error(`harvestStreet: missing decodedNode for user decision nodeId="${d.nodeId}"`)
-      const snap = snapshots.get(d.nodeId)
-      if (!snap) throw new Error(`harvestStreet: missing weight snapshot for user decision nodeId="${d.nodeId}"`)
-
-      const heroCombos = this.userSeat === 0 ? oopCombos : ipCombos
-      const villainCombos = this.userSeat === 0 ? ipCombos : oopCombos
-
-      const responseNodes: ReviewDecision['responseNodes'] = []
-      for (const label of decodedNode.actionLabels) {
-        const childId = childNodeId(d.nodeId, label)
-        const node = fetched.get(childId)
-        if (node) responseNodes.push({ forLabel: label, nodeId: childId, node })
-      }
-
-      const comboIdx = lookupComboIndex(buildComboIndexMapFromCombos(heroCombos), this.userCombo)
-      const grading: GradeResult = gradeDecision(decodedNode, comboIdx, d.chosenLabel)
-
-      this.decisions.push({
-        street: d.street,
-        nodeId: d.nodeId,
-        seat: this.userSeat,
-        boardAtDecision: d.boardAtDecision,
-        chosenLabel: d.chosenLabel,
-        grading,
-        potBbAtDecision: d.potBbAtDecision,
-        effectiveStackRemainingBb: d.effectiveStackRemainingBb,
-        actionsWithAmounts: d.actionsWithAmounts,
-        decodedNode,
-        heroCombos: heroCombos as Combo[],
-        heroWeights: snap.heroWeights,
-        villainCombos: villainCombos as Combo[],
-        villainWeights: snap.villainWeights,
-        responseNodes,
-      })
-    }
-
+    const { decisions, oopWeights, ipWeights } = await computeStreetHarvest({
+      provider: this.provider,
+      actionLog: this.streetActionLog,
+      userDecisions: this.streetUserDecisions,
+      initialOopWeights: this.streetInitialOopWeights,
+      initialIpWeights: this.streetInitialIpWeights,
+      userSeat: this.userSeat,
+      userCombo: this.userCombo,
+    })
+    this.decisions.push(...decisions)
     this.streetActionLog = []
     this.streetUserDecisions = []
-    return { oopWeights: oopW, ipWeights: ipW }
+    return { oopWeights, ipWeights }
+  }
+
+  /**
+   * P7-6b: このストリートがターンで、かつプレイ用の粗いソルブ入力(pendingTurnSolveInput)が
+   * 記録済みなら、harvestStreetで消費される前にリファイン素材を退避する。ターン以外
+   * (フロップ=事前計算、リバー=プレイ時から精密)では何もしない。transitionToNextStreet/
+   * finalizeFold/finalizeShowdownがharvestStreetを呼ぶ直前に必ず呼ぶこと。
+   */
+  private captureTurnRefineMaterialIfNeeded(): void {
+    if (this.street !== 'turn' || !this.pendingTurnSolveInput) return
+    this.refineMaterial = {
+      solveInput: this.pendingTurnSolveInput,
+      actionLog: [...this.streetActionLog],
+      userDecisions: [...this.streetUserDecisions],
+      initialOopWeights: [...this.streetInitialOopWeights],
+      initialIpWeights: [...this.streetInitialIpWeights],
+      decisionStartIdx: this.decisions.length,
+    }
+  }
+
+  /**
+   * ハンド終了時に呼ぶ。ターンのリファイン素材が無ければ即座にfactoryを解放する
+   * (従来通り)。あればrefining=trueでemitしてからバックグラウンドでターンを
+   * REFINE_SOLVEで再ソルブ・再収穫し、this.decisions/this.resultを差し替えて
+   * refining=falseでemitする。失敗してもハンド結果自体は壊さない(粗い採点のまま)。
+   */
+  private async finishOrRefine(): Promise<void> {
+    const material = this.refineMaterial
+    this.refineMaterial = null
+    if (!material) {
+      if (!this.disposed) this.deps.providerFactory.dispose()
+      return
+    }
+
+    this.refining = true
+    this.emit()
+
+    try {
+      const refineProvider = this.deps.providerFactory.forLiveStreet({ ...material.solveInput, ...REFINE_SOLVE })
+      this.activeRefineProvider = refineProvider
+      const { decisions } = await computeStreetHarvest({
+        provider: refineProvider,
+        actionLog: material.actionLog,
+        userDecisions: material.userDecisions,
+        initialOopWeights: material.initialOopWeights,
+        initialIpWeights: material.initialIpWeights,
+        userSeat: this.userSeat,
+        userCombo: this.userCombo,
+      })
+      if (this.disposed) return
+      for (let i = 0; i < decisions.length; i++) {
+        this.decisions[material.decisionStartIdx + i] = decisions[i]
+      }
+      if (this.result) {
+        this.result = {
+          ...this.result,
+          decisionSummaries: this.decisions.map((d) => ({ street: d.street, chosenLabel: d.chosenLabel, verdict: d.grading.verdict, evLossBb: d.grading.evLossBb })),
+        }
+      }
+    } catch (err) {
+      if (!this.disposed) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        this.deps.onError?.(error)
+      }
+    } finally {
+      this.activeRefineProvider?.dispose()
+      this.activeRefineProvider = null
+      if (!this.disposed) {
+        this.refining = false
+        this.emit()
+        this.deps.providerFactory.dispose()
+      }
+    }
   }
 
   /** streetContributedをpriorStreetsContributedへ繰り込み、remainingStackBb/potBbを更新する。 */
@@ -484,6 +630,7 @@ export class FullHandController {
   }
 
   private async transitionToNextStreet(): Promise<void> {
+    this.captureTurnRefineMaterialIfNeeded()
     const { oopWeights, ipWeights } = await this.harvestStreet()
     this.commitStreetContribution()
     const nextStreet: FullHandStreet = this.street === 'flop' ? 'turn' : 'river'
@@ -505,7 +652,7 @@ export class FullHandController {
     // remainingStackBb - streetContributed の残りが実質ゼロ(オールイン成立)なら
     // 直接ランアウト側へ分岐するため、ここに到達する時点で必ず正の実効スタックが残っている。
     const playSolve = nextStreet === 'turn' ? TURN_PLAY_SOLVE : RIVER_PLAY_SOLVE
-    this.provider = this.deps.providerFactory.forLiveStreet({
+    const solveInput: StreetSolveInput = {
       street: nextStreet,
       board: newBoard,
       oopCombos: filteredOop.combos,
@@ -515,7 +662,11 @@ export class FullHandController {
       potBb: this.potBb,
       effectiveStackBb: this.remainingStackBb,
       ...playSolve,
-    })
+    }
+    // P7-6b: ターンだけがこの入力をハンド終了後の精密リファインで再利用する
+    // (フロップは事前計算、リバーはプレイ時から精密なので不要)。
+    this.pendingTurnSolveInput = nextStreet === 'turn' ? solveInput : null
+    this.provider = this.deps.providerFactory.forLiveStreet(solveInput)
 
     const tree =
       nextStreet === 'turn'
@@ -540,6 +691,7 @@ export class FullHandController {
   }
 
   private async finalizeFold(foldedPlayer: Seat, finalPotBb: number): Promise<void> {
+    this.captureTurnRefineMaterialIfNeeded()
     await this.harvestStreet()
     this.phase = 'grading'
     this.emit()
@@ -558,14 +710,15 @@ export class FullHandController {
       decisionSummaries: this.decisions.map((d) => ({ street: d.street, chosenLabel: d.chosenLabel, verdict: d.grading.verdict, evLossBb: d.grading.evLossBb })),
     }
     this.phase = 'over'
-    this.deps.providerFactory.dispose()
     this.emit()
+    void this.finishOrRefine()
   }
 
   private async finalizeShowdown(finalPotBb: number, finalBoard: Card[]): Promise<void> {
     // 最終ストリート(通常はリバー)の決断はここに来るまで収穫されていない
     // (transitionToNextStreetを経由しないため)。オールイン経路(runOutRemainingCardsAndFinalize
     // 経由)では既に空になったstreetActionLog/streetUserDecisionsに対する空振り呼び出しになるだけで安全。
+    this.captureTurnRefineMaterialIfNeeded()
     await this.harvestStreet()
     this.phase = 'grading'
     this.emit()
@@ -589,8 +742,8 @@ export class FullHandController {
       decisionSummaries: this.decisions.map((d) => ({ street: d.street, chosenLabel: d.chosenLabel, verdict: d.grading.verdict, evLossBb: d.grading.evLossBb })),
     }
     this.phase = 'over'
-    this.deps.providerFactory.dispose()
     this.emit()
+    void this.finishOrRefine()
   }
 
   getResult(): HandResult {
@@ -608,12 +761,23 @@ export class FullHandController {
       userPosition: this.positionOf(this.userSeat),
       botPosition: this.positionOf(this.botSeat),
       history: this.history,
-      decisions: this.decisions,
+      // P7-6b: 呼び出し時点の配列をコピーして返す。this.decisionsはリファイン完了時に
+      // 要素を差し替える(同一配列を破壊的に更新する)ため、コピーせず参照をそのまま返すと
+      // 過去に取得済みのReviewData.decisionsまで後から書き換わってしまい、store.ts側の
+      // 「旧reviewと新reviewで同じ決断オブジェクトかどうか」比較(featuresの選択的無効化)が
+      // 機能しなくなる。
+      decisions: [...this.decisions],
     }
   }
 
   dispose(): void {
+    this.disposed = true
     this.provider.dispose()
+    // P7-6b: リファイン中の破棄。finishOrRefine側のfinallyが二重にdisposeしないよう、
+    // ここで参照をnull化してから呼ぶ(disposeが必ず1回だけ呼ばれるようにする)。
+    const refineProvider = this.activeRefineProvider
+    this.activeRefineProvider = null
+    refineProvider?.dispose()
     this.deps.providerFactory.dispose()
   }
 }

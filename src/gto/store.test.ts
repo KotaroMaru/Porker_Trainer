@@ -18,7 +18,8 @@ import {
 } from './store'
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
-import type { NodeProviderFactory } from './trainer/nodeDataProvider'
+import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeDataProvider'
+import type { FullHandSnapshot } from './trainer/fullHandFlow'
 import { SCENARIOS } from './data/scenarios'
 import { FLOPS } from './data/flops'
 
@@ -362,6 +363,134 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(state.sessionTally.hands).toBe(1)
     expect(state.sessionTally.decisions).toBe(state.review!.decisions.length)
   }, 30_000)
+
+  it('P7-6b: レビュー閲覧中(status=graded)にターンのバックグラウンドリファインが完了しても、statusがhandOverへ引き戻されずreview/featuresだけが差し替わる', async () => {
+    // in-processファクトリは同期的に解くため、通常はreviewを開く前にリファインまで
+    // 完了してしまい、レース自体を再現できない。3回目のforLiveStreet呼び出し
+    // (ターン+リバーのプレイ用ソルブに続く、ターンのリファイン呼び出し)だけ、
+    // readyの解決を手動でゲートして「レビュー画面を開いた後にリファインが完了する」
+    // 状況を確定的に再現する。
+    // ボットの行動は(store.tsがMath.randomを直接使うため)このテストからは
+    // 決定論的に制御できない。ユーザー側はcheck優先・無ければcallを選び続けることで、
+    // ターンへ到達する前にフォールド/オールインへ逸れる確率を実用上無視できる水準まで
+    // 下げつつ、万一に備えて数ハンド分リトライする。
+    // waitForStorePause()はstatusが停止集合に「現在」含まれるかどうかしか見ておらず、
+    // 直前のポーズをまだ消費していない状態で連続してchooseActionを呼ぶと、真に新しい
+    // ポーズを待たずに古い(既に消費済みの)fullHandスナップショットへ基づいてラベルを
+    // 選んでしまうことがある(applyActionの「unknown label」throwやガード無限ループの
+    // 原因になりうる)。ここでは`fullHand`オブジェクトの参照が実際に更新されたことを
+    // 条件に含めることで、真に新しいポーズを確定的に待つ。基準スナップショットは
+    // 「これから行うアクションの直前」に呼び出し側が明示的に渡す(待ち関数の内部で
+    // 遅延取得すると、アクションが呼び出し側の`await`で既に完了済みの場合に「今の状態」を
+    // 基準として捕捉してしまい、既に到達済みの新しいポーズ自体を「まだ来ていない」と
+    // 誤認して無期限に待ち続けるバグになる)。
+    function waitForFreshPause(seenFullHand: FullHandSnapshot | null): Promise<void> {
+      return new Promise((resolve, reject) => {
+        const isFresh = () => {
+          const s = useGtoStore.getState()
+          if (s.status === 'handOver' || s.status === 'error') return true
+          return s.status === 'userTurn' && s.fullHand !== seenFullHand
+        }
+        if (isFresh()) {
+          resolve()
+          return
+        }
+        const timer = setTimeout(() => {
+          unsub()
+          const s = useGtoStore.getState()
+          reject(new Error(`waitForFreshPause timed out: status=${s.status} phase=${s.fullHand?.phase} street=${s.fullHand?.street}`))
+        }, 15_000)
+        const unsub = useGtoStore.subscribe(() => {
+          if (isFresh()) {
+            clearTimeout(timer)
+            unsub()
+            resolve()
+          }
+        })
+      })
+    }
+
+    let callIdx = 0
+    let gate = new Promise<void>(() => {})
+    let releaseRefine: (() => void) | null = null
+    __setProviderFactoryForTests(() => {
+      const inner = createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 })
+      const wrapped: NodeProviderFactory = {
+        forFlop: (s, b) => inner.forFlop(s, b),
+        forLiveStreet: (input) => {
+          callIdx++
+          const real = inner.forLiveStreet(input) // in-processは呼び出し時点で既に同期的に解いている
+          if (callIdx <= 2) return real
+          const gated: StreetNodeProvider = { ...real, ready: gate.then(() => real.ready) }
+          return gated
+        },
+        dispose: () => inner.dispose(),
+      }
+      return wrapped
+    })
+
+    let reachedTurnRefine = false
+    for (let attempt = 0; attempt < 8 && !reachedTurnRefine; attempt++) {
+      callIdx = 0
+      gate = new Promise<void>((resolve) => {
+        releaseRefine = resolve
+      })
+      const beforeStart = useGtoStore.getState().fullHand
+      if (attempt === 0) await useGtoStore.getState().startNewSpot()
+      else await useGtoStore.getState().nextSpot()
+      await waitForFreshPause(beforeStart)
+      let guard = 0
+      while (useGtoStore.getState().status === 'userTurn') {
+        guard++
+        if (guard > 15) throw new Error('too many user decisions, possible infinite loop')
+        const snap = useGtoStore.getState().fullHand!
+        const label =
+          snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts.find((a) => a.label === 'call')?.label ?? snap.actionsWithAmounts[0].label
+        useGtoStore.getState().chooseAction(label)
+        await waitForFreshPause(snap)
+      }
+      expect(useGtoStore.getState().status).toBe('handOver')
+      reachedTurnRefine = callIdx === 3 // ターン+リバーのプレイ用+ターンのリファイン(ゲートされ未完了)
+    }
+    expect(reachedTurnRefine).toBe(true)
+
+    useGtoStore.getState().openReviewFromResult()
+    expect(useGtoStore.getState().status).toBe('graded')
+    const reviewAtOpen = useGtoStore.getState().review!
+    const turnIdx = reviewAtOpen.decisions.findIndex((d) => d.street === 'turn')
+    expect(turnIdx).toBeGreaterThanOrEqual(0)
+    // 表示中の決断(idx=0)のfeaturesが計算されるのを待つ。
+    await waitForReviewFeatures()
+    // ターン決断のfeaturesも表示させて計算済みにしておく(リファイン後に無効化されることを検証するため)。
+    useGtoStore.getState().setActiveDecisionIdx(turnIdx)
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeatures[turnIdx]).not.toBeNull()
+
+    // ここでリファインの完了を解放する。finishOrRefineが決断を差し替え、
+    // onUpdateがphase='over'のフォローアップemitを発行する。
+    releaseRefine!()
+    {
+      const start = Date.now()
+      while (useGtoStore.getState().fullHand?.refining) {
+        if (Date.now() - start > 10_000) {
+          const s = useGtoStore.getState()
+          throw new Error(`timed out waiting for refining to settle: status=${s.status} refining=${s.fullHand?.refining} reviewFeaturesStatus=${s.reviewFeaturesStatus}`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 20))
+      }
+    }
+
+    const state = useGtoStore.getState()
+    expect(state.status).toBe('graded') // handOverへ引き戻されていない(P7-6bのバグ修正の核心)
+    expect(state.reviewSource).toBe('live')
+    expect(state.review).not.toBeNull()
+    expect(state.review!.decisions.length).toBe(reviewAtOpen.decisions.length)
+    expect(state.review).not.toBe(reviewAtOpen) // リファイン後の新しいReviewDataへ差し替わっている
+    // リファインで差し替わったターン決断のfeaturesは選択的に無効化され(表示中のidxなので
+    // 自動的に再計算がキックされる)、いずれ再びnon-nullに戻る。
+    await waitForReviewFeatures()
+    expect(useGtoStore.getState().reviewFeatures[turnIdx]).not.toBeNull()
+  }, 60_000)
 
   it('ソルブ途中でnextSpotを呼んでも、進行中のコントローラがクリーンにdisposeされる(factory.disposeを検証)', async () => {
     let disposedCount = 0

@@ -14,7 +14,7 @@ export function ResultSummaryScreen() {
   const { fullHand, openReviewFromResult, nextSpot } = useGtoStore()
 
   if (!fullHand || fullHand.phase !== 'over' || !fullHand.result) return null
-  const { result, userSeat, userCombo, userPosition, botPosition } = fullHand
+  const { result, userSeat, userCombo, userPosition, botPosition, refining } = fullHand
 
   const netColor = result.userNetBb > 0 ? 'var(--green-light)' : result.userNetBb < 0 ? 'var(--red)' : 'var(--text-dim)'
   const netSign = result.userNetBb > 0 ? '+' : ''
@@ -91,6 +91,10 @@ export function ResultSummaryScreen() {
       <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
         {result.decisionSummaries.length}決断中 正解{result.decisionSummaries.filter((d) => d.verdict === 'correct').length}
       </div>
+
+      {/* P7-6b: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
+          精密再ソルブしている間はその旨を伝える(完了するとverdict/EVロスが更新されうる)。 */}
+      {refining && <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>ターンを精密解析中…</div>}
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button

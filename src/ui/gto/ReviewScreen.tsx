@@ -25,7 +25,7 @@ function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
 }
 
 export function ReviewScreen() {
-  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark } =
+  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand } =
     useGtoStore()
   const [copied, setCopied] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle')
@@ -93,6 +93,13 @@ export function ReviewScreen() {
           </button>
         ))}
       </div>
+
+      {/* P7-6b: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
+          精密再ソルブしている間はその旨を伝える(完了するとverdict/EVロスが更新されうる)。
+          reviewSource==='live'(このハンド自身)の場合のみ表示する。 */}
+      {reviewSource === 'live' && fullHand?.refining && (
+        <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>ターンを精密解析中…</div>
+      )}
 
       {/* 2. 決断ステッパー+判定バッジ */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>

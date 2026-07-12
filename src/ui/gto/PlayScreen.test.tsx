@@ -63,6 +63,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
     actionsWithAmounts: [{ label: 'check', amountBb: 0 }],
     history: [{ street: 'preflop', position: scenario.raiser.position, label: 'レイズ 2.5bb', isUserDecision: false }],
     result: null,
+    refining: false,
     latestActions: [],
     scenario,
     flop,

@@ -306,7 +306,11 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       const userSeat: Seat = Math.random() < 0.5 ? 0 : 1
 
       if (settings.mode === 'full') {
-        const controller = new FullHandController({
+        // P7-6b: onUpdateは自分自身(controller)を後から参照する必要があるため、
+        // 先に変数を宣言してからコンストラクタへ渡す(onUpdateが実際に呼ばれるのは
+        // start()経由の非同期継続以降で、その時点ではcontrollerは必ず代入済み)。
+        let controller: FullHandController
+        controller = new FullHandController({
           scenario,
           flop,
           flopSolution,
@@ -314,6 +318,29 @@ export const useGtoStore = create<GtoState>((set, get) => ({
           rng: Math.random,
           providerFactory: providerFactoryCreator(),
           onUpdate: (snap) => {
+            const state = get()
+            if (state.status === 'graded') {
+              // 既にhandOver→gradedへ遷移済み(レビュー画面表示中、または既に別画面に
+              // 移動済み)。ここでstatusを'handOver'へ戻すと、リファイン完了などの
+              // フォローアップemit(phase='over'のまま)でレビュー閲覧中の画面が
+              // サマリーへ引き戻されてしまう(P7-6bのバグ修正)。表示中のreviewが
+              // このハンド自身のライブレビューであれば、リファイン後の内容へ差し替える。
+              if (state.reviewSource === 'live' && state.fullHandController === controller && state.review) {
+                const oldReview = state.review
+                const newReview = controller.getReview()
+                set((s) => {
+                  const nextFeatures =
+                    oldReview.decisions.length === newReview.decisions.length
+                      ? newReview.decisions.map((d, i) => (d === oldReview.decisions[i] ? (s.reviewFeatures[i] ?? null) : null))
+                      : new Array(newReview.decisions.length).fill(null)
+                  return { fullHand: snap, review: newReview, reviewFeatures: nextFeatures, reviewFeaturesStatus: 'idle' }
+                })
+                get().ensureFeatures(get().activeDecisionIdx)
+              } else {
+                set({ fullHand: snap })
+              }
+              return
+            }
             set({
               fullHand: snap,
               status: snap.phase === 'userTurn' ? 'userTurn' : snap.phase === 'over' ? 'handOver' : 'botThinking',
