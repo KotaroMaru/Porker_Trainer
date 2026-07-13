@@ -153,13 +153,18 @@ interface StreetRefineMaterial {
 const NEAR_ZERO_BB = 1e-6
 
 /**
- * P7-6a: プレイ中にボットが行動するために必要な最低限の粗さでターンをソルブする
+ * P7-6a/P8-2: プレイ中にボットが行動するために必要な最低限の粗さでターンをソルブする
  * (UX優先度①「計算待ちを最小に」)。実測(checkEveryIterations=25のベンチ)で
- * iter75/checkEvery25は典型~4秒・上限~11秒で4%程度の収束に達する。採点の精度は
- * ハンド終了後のバックグラウンド精密リファイン(REFINE_SOLVE、P7-6b)で別途補う
- * (UX優先度②)。ボット行動の品質はここでは最下位優先度③として明示的に妥協する。
+ * iter25=典型~3.8秒(4.0%)、iter50=~7.4秒(2.0%)、iter75=~11秒(1.2%)。
+ * P8-2でcfr.tsに両者リーチ全ゼロの無損失プルーニングを追加したが、この規模の
+ * ターン部分ゲームでは効果が薄く(~2〜5%改善)、実用的な待ち時間短縮には不十分と
+ * 判明した。そのためmaxIterationsを75→50に引き下げ、絶対的な最悪ケースを
+ * ~11秒→~7.4秒へ短縮する(典型ケースはcheckEveryIterations=25の時点で既に
+ * targetExploitability付近まで収束していることが多く、実質的な影響は小さい)。
+ * 採点の精度はハンド終了後のバックグラウンド精密リファイン(REFINE_SOLVE、P7-6b)で
+ * 別途補う(UX優先度②)。ボット行動の品質はここでは最下位優先度③として明示的に妥協する。
  */
-const TURN_PLAY_SOLVE = { maxIterations: 75, targetExploitability: 0.04, checkEveryIterations: 25 }
+const TURN_PLAY_SOLVE = { maxIterations: 50, targetExploitability: 0.04, checkEveryIterations: 25 }
 /** リバーは木が小さくソルブが高速なため、プレイ時から精密な収束のままでよい。 */
 const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
 /**

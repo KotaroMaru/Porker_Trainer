@@ -325,9 +325,19 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
       const child = node.children[bi]
       const childReach0 = new Float64Array(n0)
       const childReach1 = new Float64Array(n1)
-      for (let h0 = 0; h0 < n0; h0++) childReach0[h0] = blockedByCard(cards0[h0], card) ? 0 : reach0[h0]
-      for (let h1 = 0; h1 < n1; h1++) childReach1[h1] = blockedByCard(cards1[h1], card) ? 0 : reach1[h1]
-      const [cv0, cv1] = walk(child, childReach0, childReach1, iter)
+      let childSum0 = 0
+      let childSum1 = 0
+      for (let h0 = 0; h0 < n0; h0++) {
+        const v = blockedByCard(cards0[h0], card) ? 0 : reach0[h0]
+        childReach0[h0] = v
+        childSum0 += v
+      }
+      for (let h1 = 0; h1 < n1; h1++) {
+        const v = blockedByCard(cards1[h1], card) ? 0 : reach1[h1]
+        childReach1[h1] = v
+        childSum1 += v
+      }
+      const [cv0, cv1] = walk(child, childReach0, childReach1, childSum0, childSum1, iter)
       for (let h0 = 0; h0 < n0; h0++) {
         if (!blockedByCard(cards0[h0], card)) { v0[h0] += cv0[h0]; cnt0[h0] += 1 }
       }
@@ -340,7 +350,7 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
     return [v0, v1]
   }
 
-  function decisionValue(node: DecisionNode, reach0: Float64Array, reach1: Float64Array, iter: number): [Float64Array, Float64Array] {
+  function decisionValue(node: DecisionNode, reach0: Float64Array, reach1: Float64Array, sum0: number, sum1: number, iter: number): [Float64Array, Float64Array] {
     const acting = node.player
     const actingHandCount = acting === 0 ? n0 : n1
     const entry = getEntry(node, actingHandCount)
@@ -351,12 +361,22 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
     for (let a = 0; a < actionCount; a++) {
       if (acting === 0) {
         const newReach0 = new Float64Array(n0)
-        for (let h = 0; h < n0; h++) newReach0[h] = reach0[h] * strategy[h * actionCount + a]
-        childValues.push(walk(node.children[a], newReach0, reach1, iter))
+        let newSum0 = 0
+        for (let h = 0; h < n0; h++) {
+          const v = reach0[h] * strategy[h * actionCount + a]
+          newReach0[h] = v
+          newSum0 += v
+        }
+        childValues.push(walk(node.children[a], newReach0, reach1, newSum0, sum1, iter))
       } else {
         const newReach1 = new Float64Array(n1)
-        for (let h = 0; h < n1; h++) newReach1[h] = reach1[h] * strategy[h * actionCount + a]
-        childValues.push(walk(node.children[a], reach0, newReach1, iter))
+        let newSum1 = 0
+        for (let h = 0; h < n1; h++) {
+          const v = reach1[h] * strategy[h * actionCount + a]
+          newReach1[h] = v
+          newSum1 += v
+        }
+        childValues.push(walk(node.children[a], reach0, newReach1, sum0, newSum1, iter))
       }
     }
 
@@ -418,10 +438,16 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
     return [v0, v1]
   }
 
-  function walk(node: TreeNode, reach0: Float64Array, reach1: Float64Array, iter: number): [Float64Array, Float64Array] {
+  // 両側のリーチ確率が完全にゼロの部分木は、どちらの手からも到達不可能であり
+  // 寄与が厳密にゼロ(v0はreach1に、v1はreach0に線形依存するため)。無損失な
+  // プルーニングとして、ターミナル評価/チャンス展開/後悔更新を丸ごとスキップする。
+  // sum0/sum1は呼び出し側(decisionValue/chanceValue)がリーチ配列構築と同じループで
+  // 計算済みの値を渡すため、ここでの追加スキャンは発生しない。
+  function walk(node: TreeNode, reach0: Float64Array, reach1: Float64Array, sum0: number, sum1: number, iter: number): [Float64Array, Float64Array] {
+    if (sum0 === 0 && sum1 === 0) return [new Float64Array(n0), new Float64Array(n1)]
     if (node.kind === 'terminal') return terminalValue(node, reach0, reach1)
     if (node.kind === 'chance') return chanceValue(node, reach0, reach1, iter)
-    return decisionValue(node, reach0, reach1, iter)
+    return decisionValue(node, reach0, reach1, sum0, sum1, iter)
   }
 
   function getAverageStrategy(node: DecisionNode): number[][] {
@@ -432,13 +458,16 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
 
   let iterationsRun = 0
   let exploitability = Infinity
+  // ルートのリーチ和は反復間で不変(initialReachは固定)なので1回だけ計算する。
+  const initialSum0 = uni0.initialReach.reduce((a, b) => a + b, 0)
+  const initialSum1 = uni1.initialReach.reduce((a, b) => a + b, 0)
 
   for (let t = 1; t <= maxIterations; t++) {
     const reach0 = new Float64Array(uni0.initialReach)
     const reach1 = new Float64Array(uni1.initialReach)
     // 戻り値(瞬間戦略でのCFR値)は後悔値・平均戦略の更新にのみ使う。振動するため
     // ゲーム値の算出には使わない(平均戦略ベースのselfPlayValueを別途使う)。
-    walk(game.root, reach0, reach1, t)
+    walk(game.root, reach0, reach1, initialSum0, initialSum1, t)
     iterationsRun = t
 
     if (t % checkEvery === 0 || t === maxIterations) {

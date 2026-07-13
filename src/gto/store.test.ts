@@ -311,18 +311,30 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     __resetProviderFactoryForTests()
   })
 
-  /** statusがユーザー入力待ち(userTurn)またはハンド終了(handOver/error)になるまで待つ。 */
-  async function waitForStorePause(timeoutMs = 30000): Promise<void> {
+  /**
+   * statusがユーザー入力待ち(userTurn)またはハンド終了(handOver/error)になるまで待つ。
+   * `beforeFullHand`(呼び出し直前・状態変化を起こすアクションの前に読み取ったfullHand)を
+   * 渡すと、まだ反映されていない古いstatus(前回の一時停止が既に停止集合に含まれる値の
+   * ままの場合)を「新しい一時停止に到達した」と誤認しない(fullHandオブジェクトの参照が
+   * 実際に更新されたことも条件に含める)。省略時は従来通りstatusのみで判定する
+   * (呼び出し側がbefore値を用意できない箇所向けの後方互換)。
+   */
+  async function waitForStorePause(beforeFullHand?: FullHandSnapshot | null, timeoutMs = 30000): Promise<void> {
     const start = Date.now()
-    while (!['userTurn', 'handOver', 'error'].includes(useGtoStore.getState().status)) {
-      if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for store pause (status=${useGtoStore.getState().status})`)
+    for (;;) {
+      const s = useGtoStore.getState()
+      const statusOk = ['userTurn', 'handOver', 'error'].includes(s.status)
+      const fresh = beforeFullHand === undefined || s.fullHand !== beforeFullHand
+      if (statusOk && fresh) return
+      if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for store pause (status=${s.status})`)
       await new Promise((r) => setTimeout(r, 20))
     }
   }
 
   it('fullモードでcheckを選び続けるとhandOverに到達し、fullHand.resultが設定される', async () => {
+    const beforeStart = useGtoStore.getState().fullHand
     await useGtoStore.getState().startNewSpot()
-    await waitForStorePause()
+    await waitForStorePause(beforeStart)
 
     let guard = 0
     while (useGtoStore.getState().status === 'userTurn') {
@@ -332,16 +344,17 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       if (!snap) throw new Error('fullHand should be set while status===userTurn')
       const label = snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts[0].label
       useGtoStore.getState().chooseAction(label)
-      await waitForStorePause()
+      await waitForStorePause(snap)
     }
 
     expect(useGtoStore.getState().status).toBe('handOver')
     expect(useGtoStore.getState().fullHand?.result).not.toBeNull()
-  }, 30_000)
+  }, 60_000) // P7-6bのバックグラウンドリファイン(ターン到達時に自動発火)がCPUを追加で使うため30sでは不足しうる
 
   it('openReviewFromResultでhandOver後にreview(複数決断もありうる)が構築され、statusがgradedになりtallyのhands/decisionsが増える', async () => {
+    const beforeStart = useGtoStore.getState().fullHand
     await useGtoStore.getState().startNewSpot()
-    await waitForStorePause()
+    await waitForStorePause(beforeStart)
     let guard = 0
     while (useGtoStore.getState().status === 'userTurn') {
       guard++
@@ -349,7 +362,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       const snap = useGtoStore.getState().fullHand!
       const label = snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts[0].label
       useGtoStore.getState().chooseAction(label)
-      await waitForStorePause()
+      await waitForStorePause(snap)
     }
     expect(useGtoStore.getState().status).toBe('handOver')
 
@@ -362,7 +375,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(state.reviewFeatures.length).toBe(state.review!.decisions.length)
     expect(state.sessionTally.hands).toBe(1)
     expect(state.sessionTally.decisions).toBe(state.review!.decisions.length)
-  }, 30_000)
+  }, 60_000) // P7-6bのバックグラウンドリファイン(ターン到達時に自動発火)がCPUを追加で使うため30sでは不足しうる
 
   it('P7-6b: レビュー閲覧中(status=graded)にターンのバックグラウンドリファインが完了しても、statusがhandOverへ引き戻されずreview/featuresだけが差し替わる', async () => {
     // in-processファクトリは同期的に解くため、通常はreviewを開く前にリファインまで
@@ -507,8 +520,9 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       return wrapped
     })
 
+    const beforeStart = useGtoStore.getState().fullHand
     await useGtoStore.getState().startNewSpot()
-    await waitForStorePause()
+    await waitForStorePause(beforeStart)
     expect(useGtoStore.getState().status).toBe('userTurn') // まだハンド途中
 
     await useGtoStore.getState().nextSpot()
@@ -537,8 +551,9 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
     expect(useGtoStore.getState().status).toBe('graded')
 
+    const beforeSetMode = useGtoStore.getState().fullHand
     useGtoStore.getState().setMode('full')
-    await waitForStorePause()
+    await waitForStorePause(beforeSetMode)
 
     const state = useGtoStore.getState()
     expect(['userTurn', 'handOver']).toContain(state.status)
