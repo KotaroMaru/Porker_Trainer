@@ -1,0 +1,157 @@
+name: GTO Solver Batch Generation
+
+# P8-4: 手動dispatchで指定シナリオの未生成フロップをソルブし、public/gto/solutions/
+# へ結果を自動コミットするワークフロー。マスタープランP6のバッチ運用手順(手元PCで
+# caffeinate付きcargo実行)をGitHub Actionsへ移し、手元PCを占有せずに実行する。
+#
+# 使い方: Actionsタブ → 本ワークフロー → Run workflow → scenario(必須。
+# tools/solver/scenarios/<id>.jsonのID)・chunk_size(既定1)・limit(試走時のみ、
+# 残りフロップの先頭N件に絞る)を入力して実行。
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "シナリオID(tools/solver/scenarios/<id>.jsonのID、例: srp_co_vs_bb)"
+        required: true
+        type: string
+      chunk_size:
+        description: "1並列ジョブあたりのフロップ数"
+        required: false
+        default: "1"
+        type: string
+      limit:
+        description: "試走用: 残りフロップの先頭N件のみ処理(空欄=全件)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      has-work: ${{ steps.plan.outputs.has-work }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - id: plan
+        run: |
+          node tools/solver/ci-plan.mjs "${{ inputs.scenario }}" "${{ inputs.chunk_size }}" "${{ inputs.limit }}" > /tmp/plan.json
+          node -e "
+            const fs = require('fs');
+            const data = JSON.parse(fs.readFileSync('/tmp/plan.json', 'utf8'));
+            console.error('scenario=${{ inputs.scenario }} totalFlops='+data.totalFlops+' alreadyDone='+data.alreadyDone+' remaining='+data.totalRemaining+' chunks='+data.matrix.include.length);
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'matrix='+JSON.stringify(data.matrix)+'\n');
+            fs.appendFileSync(process.env.GITHUB_OUTPUT, 'has-work='+data.hasWork+'\n');
+          "
+
+  solve:
+    needs: plan
+    if: needs.plan.outputs.has-work == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix: ${{ fromJson(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/solver/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('tools/solver/Cargo.lock') }}
+      - name: Build precompute (release)
+        working-directory: tools/solver
+        run: cargo build --release -p precompute
+      - name: Solve assigned flops
+        working-directory: tools/solver
+        run: |
+          mkdir -p ../../public/gto/solutions
+          FLOPS='${{ toJson(matrix.flops) }}'
+          echo "$FLOPS" | node -e "
+            const flops = JSON.parse(require('fs').readFileSync(0,'utf8'));
+            process.stdout.write(flops.join('\n'));
+          " > /tmp/flops.txt
+          FAILED=0
+          while IFS= read -r flop; do
+            [ -z "$flop" ] && continue
+            echo "=== solving ${{ inputs.scenario }}/$flop ==="
+            T0=$(date +%s)
+            /usr/bin/time -v ./target/release/precompute \
+              --scenario "scenarios/${{ inputs.scenario }}.json" \
+              --out ../../public/gto/solutions \
+              --flop "$flop" \
+              --max-iter 500 --target-expl 0.005 --resume --progress 2>&1 \
+              | tee -a solve.log \
+              | grep -E "Maximum resident|expl=|error" || true
+            # precompute自体の成否はmanifest.jsonへのエントリ記録有無で判定する
+            # (パイプの終了コードはgrepのものになり信頼できないため)。
+            if ! grep -qE "\"flop\":[[:space:]]*\"$flop\"" "../../public/gto/solutions/${{ inputs.scenario }}/manifest.json" 2>/dev/null; then
+              echo "!!! flop=$flop failed (not recorded in manifest.json)"
+              FAILED=1
+            fi
+            T1=$(date +%s)
+            echo "flop=$flop elapsed=$((T1 - T0))s"
+          done < /tmp/flops.txt
+          # 一部フロップが失敗していてもここまでに生成できた分はartifactへ残す
+          # (upload-artifactはif: alwaysで実行される)。ジョブ自体は失敗として
+          # 可視化し、次回dispatchで--resumeにより自動的に再試行対象になる。
+          if [ "$FAILED" = "1" ]; then
+            echo "one or more flops failed in this chunk; see log above"
+            exit 1
+          fi
+      - name: Upload chunk artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-${{ strategy.job-index }}
+          path: |
+            public/gto/solutions/${{ inputs.scenario }}/*.bin
+            public/gto/solutions/${{ inputs.scenario }}/manifest.json
+            tools/solver/solve.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  collect:
+    needs: [plan, solve]
+    if: always() && needs.plan.outputs.has-work == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # git pull --rebaseで完全な履歴を参照できるようにする
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-*
+          path: artifacts
+      - name: Merge chunk results into repo
+        run: node tools/solver/ci-merge.mjs "${{ inputs.scenario }}" artifacts
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "public/gto/solutions/${{ inputs.scenario }}"
+          if git diff --cached --quiet; then
+            echo "no changes to commit (all chunks may have failed)"
+          else
+            git commit -m "data(gto): バッチ生成 ${{ inputs.scenario }} [skip ci]"
+            # ソルブに数時間かかるため、実行中にmainが動いている可能性がある。
+            # rebaseしてから push する(実データ(bin/manifest)だけの変更なので
+            # コンフリクトの可能性は低いが、念のため)。
+            git pull --rebase origin main
+            git push
+          fi
