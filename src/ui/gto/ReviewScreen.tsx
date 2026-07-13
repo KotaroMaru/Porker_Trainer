@@ -94,11 +94,25 @@ export function ReviewScreen() {
         ))}
       </div>
 
-      {/* P7-6b: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
-          精密再ソルブしている間はその旨を伝える(完了するとverdict/EVロスが更新されうる)。
+      {/* P7-6b/P8-3: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
+          精密再ソルブしている間は進捗バーで伝える(完了するとverdict/EVロスが更新されうる)。
           reviewSource==='live'(このハンド自身)の場合のみ表示する。 */}
       {reviewSource === 'live' && fullHand?.refining && (
-        <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>ターンを精密解析中…</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
+            ターンを精密解析中…{fullHand.refineProgress !== null && ` (${Math.round(fullHand.refineProgress * 100)}%)`}
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--panel-bg-light)', overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.round((fullHand.refineProgress ?? 0) * 100)}%`,
+                background: 'var(--gold)',
+                transition: 'width 0.3s ease-out',
+              }}
+            />
+          </div>
+        </div>
       )}
 
       {/* 2. 決断ステッパー+判定バッジ */}

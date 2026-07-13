@@ -14,7 +14,7 @@ export function ResultSummaryScreen() {
   const { fullHand, openReviewFromResult, nextSpot } = useGtoStore()
 
   if (!fullHand || fullHand.phase !== 'over' || !fullHand.result) return null
-  const { result, userSeat, userCombo, userPosition, botPosition, refining } = fullHand
+  const { result, userSeat, userCombo, userPosition, botPosition, refining, refineProgress } = fullHand
 
   const netColor = result.userNetBb > 0 ? 'var(--green-light)' : result.userNetBb < 0 ? 'var(--red)' : 'var(--text-dim)'
   const netSign = result.userNetBb > 0 ? '+' : ''
@@ -92,9 +92,25 @@ export function ResultSummaryScreen() {
         {result.decisionSummaries.length}決断中 正解{result.decisionSummaries.filter((d) => d.verdict === 'correct').length}
       </div>
 
-      {/* P7-6b: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
-          精密再ソルブしている間はその旨を伝える(完了するとverdict/EVロスが更新されうる)。 */}
-      {refining && <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>ターンを精密解析中…</div>}
+      {/* P7-6b/P8-3: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
+          精密再ソルブしている間は進捗バーで伝える(完了するとverdict/EVロスが更新されうる)。 */}
+      {refining && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
+            ターンを精密解析中…{refineProgress !== null && ` (${Math.round(refineProgress * 100)}%)`}
+          </div>
+          <div style={{ height: 6, borderRadius: 3, background: 'var(--panel-bg-light)', overflow: 'hidden' }}>
+            <div
+              style={{
+                height: '100%',
+                width: `${Math.round((refineProgress ?? 0) * 100)}%`,
+                background: 'var(--gold)',
+                transition: 'width 0.3s ease-out',
+              }}
+            />
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: 8 }}>
         <button

@@ -84,6 +84,11 @@ export interface FullHandSnapshot {
    */
   refining: boolean
   /**
+   * P8-3: refining中のリファインソルブ進捗(0..1)。refining===falseの間は常にnull。
+   * レビュー/サマリー画面の「ターンを精密解析中…」バッジをプログレスバー表示にするために追加。
+   */
+  refineProgress: number | null
+  /**
    * 現在のストリートで各プレイヤーが直近に取ったアクション(0〜2件、行動した順ではなく
    * 常にOOP→IP順)。P7-2: プレイ中の場(フェルト)表示専用(「BB ベット4.1bb」等)。
    * HistoryEntry/ブックマークcodecには含めない非永続の表示専用データ。
@@ -334,6 +339,10 @@ export class FullHandController {
   private refineMaterial: StreetRefineMaterial | null = null
   /** リファイン中かどうか(FullHandSnapshot.refiningとしてUIへ公開)。 */
   private refining = false
+  /** P8-3: リファイン中のソルブ進捗(0..1、FullHandSnapshot.refineProgressとしてUIへ公開)。 */
+  private refineProgress: number | null = null
+  /** P8-3: 進捗ポーリング用インターバルID。リファイン開始時にセットし、終了時に必ずclearする。 */
+  private refineProgressTimer: ReturnType<typeof setInterval> | null = null
   /** リファイン用に一時的に開いているprovider(dispose()からのキャンセル対象)。 */
   private activeRefineProvider: StreetNodeProvider | null = null
   /** dispose()済みなら以後のemit/onErrorを抑止する(二重dispose・破棄後のstore更新を防ぐ)。 */
@@ -397,6 +406,7 @@ export class FullHandController {
       history: this.history,
       result: this.result,
       refining: this.refining,
+      refineProgress: this.refining ? this.refineProgress : null,
       latestActions,
       scenario: this.deps.scenario,
       flop: this.deps.flop,
@@ -584,11 +594,23 @@ export class FullHandController {
     }
 
     this.refining = true
+    this.refineProgress = 0
     this.emit()
 
     try {
       const refineProvider = this.deps.providerFactory.forLiveStreet({ ...material.solveInput, ...REFINE_SOLVE })
       this.activeRefineProvider = refineProvider
+      // P8-3: リファイン中の進捗をUIへ伝えるため、~500msごとにprovider.progress()を
+      // ポーリングしてemitする(値が変化した時のみ、無駄な再描画を避ける)。
+      // provider.ready解決後はprogress()が常にnullを返す仕様なので、その時点で
+      // 自然にポーリングを止めてもよいが、finallyでの確実なclearIntervalに委ねる。
+      this.refineProgressTimer = setInterval(() => {
+        const fraction = this.activeRefineProvider?.progress()?.fraction ?? null
+        if (fraction !== this.refineProgress) {
+          this.refineProgress = fraction
+          this.emit()
+        }
+      }, 500)
       const { decisions } = await computeStreetHarvest({
         provider: refineProvider,
         actionLog: material.actionLog,
@@ -614,10 +636,15 @@ export class FullHandController {
         this.deps.onError?.(error)
       }
     } finally {
+      if (this.refineProgressTimer !== null) {
+        clearInterval(this.refineProgressTimer)
+        this.refineProgressTimer = null
+      }
       this.activeRefineProvider?.dispose()
       this.activeRefineProvider = null
       if (!this.disposed) {
         this.refining = false
+        this.refineProgress = null
         this.emit()
         this.deps.providerFactory.dispose()
       }
@@ -783,6 +810,13 @@ export class FullHandController {
     const refineProvider = this.activeRefineProvider
     this.activeRefineProvider = null
     refineProvider?.dispose()
+    // P8-3: 進捗ポーリングのインターバルも即座に止める(finishOrRefine側のfinallyでも
+    // clearするが、disposed後はそちらのemitが抑止されるだけでインターバル自体は
+    // 残ってしまうため、ここで明示的に止める)。
+    if (this.refineProgressTimer !== null) {
+      clearInterval(this.refineProgressTimer)
+      this.refineProgressTimer = null
+    }
     this.deps.providerFactory.dispose()
   }
 }

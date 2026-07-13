@@ -61,6 +61,7 @@ function baseSnapshot(result: HandResult): FullHandSnapshot {
     history: [],
     result,
     refining: false,
+    refineProgress: null,
     latestActions: [],
     scenario,
     flop,
@@ -137,6 +138,24 @@ describe('ResultSummaryScreen', () => {
     expect(screen.getByText('あなた(BB)のフォールドで終了')).toBeInTheDocument()
     // ボットの手が非開示(faceDownカードのみ、ランク文字は出ない)
     expect(screen.queryByText('9')).not.toBeInTheDocument()
+  })
+
+  it('P8-3: refining中はrefineProgressに応じた進捗バー+パーセント表示が出る', () => {
+    const result: HandResult = {
+      endedBy: 'showdown',
+      userNetBb: 0,
+      finalPotBb: 11,
+      finalBoard: board5,
+      botCombo,
+      decisionSummaries: [],
+    }
+    const snap = { ...baseSnapshot(result), refining: true, refineProgress: 0.42 }
+    resetStore(snap)
+    const { container } = render(<ResultSummaryScreen />)
+
+    expect(screen.getByText('ターンを精密解析中… (42%)')).toBeInTheDocument()
+    const bar = container.querySelector('[style*="width: 42%"]')
+    expect(bar).not.toBeNull()
   })
 
   it('「次のハンド」クリックでnextSpotが呼ばれる', () => {
