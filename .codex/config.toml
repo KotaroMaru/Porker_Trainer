@@ -1,0 +1,47 @@
+# Codex プロジェクト設定(poker-trainer) — モデル運用ポリシー
+#
+# 既定はレビュー品質維持のため gpt-5.6-sol / medium とする。
+# 日常の単純な実装委譲はrescue側で明示的にモデルを下げて使う(3段運用):
+#
+#   /codex:rescue --model gpt-5.6-luna  --effort low    --fresh <明確で単純な作業>
+#   /codex:rescue --model gpt-5.6-terra --effort medium --fresh <通常の実装>
+#   /codex:rescue --model gpt-5.6-sol   --effort high   --fresh <GTO計算・複雑な設計>
+#
+# モデル可用性(2026-07-14 実環境で実行確認済み、いずれも --model 指定で正常応答):
+#   gpt-5.6-luna  … OK(単純作業用)
+#   gpt-5.6-terra … OK(通常実装用)
+#   gpt-5.6-sol   … OK(GTO計算・難所・既定)
+#
+# ─────────────────────────────────────────────────────────────
+# 【重要】このファイルの効き方
+#   Codex CLIはCWD直下の .codex/config.toml を自動では読み込まない
+#   (ベースは $CODEX_HOME/config.toml、既定 ~/.codex/config.toml)。
+#   CODEX_HOME をプロジェクト .codex/ に向けると auth.json(~/.codex/にある)が
+#   外れて401 Unauthorizedになる(実測確認済み)ため避けること。
+#   実際の切り替えは上記のように --model / --effort をrescue呼び出し時に渡す。
+#   このファイルは運用ポリシーの正典兼、プロファイルのコピー用テンプレート。
+#
+#   恒久的な名前付き設定にしたい場合は ~/.codex/<name>.config.toml として
+#   配置し `--profile <name>` で呼ぶ([profiles.*]セクションの中身をコピー)。
+#
+#   Claude Codeの /codex:rescue /codex:review は共有ランタイム経由でグローバル
+#   ~/.codex/config.toml を参照する。--model/--effort フラグは各コマンド呼び出しで
+#   上書きできる(上記3段運用の例を参照)。
+#
+#   review gateは有効化しない(reviewGateEnabled=false のまま。手動実行のみ)。
+# ─────────────────────────────────────────────────────────────
+
+model = "gpt-5.6-sol"
+model_reasoning_effort = "medium"
+
+[profiles.luna]
+model = "gpt-5.6-luna"
+model_reasoning_effort = "low"
+
+[profiles.terra]
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
+
+[profiles.sol]
+model = "gpt-5.6-sol"
+model_reasoning_effort = "high"
