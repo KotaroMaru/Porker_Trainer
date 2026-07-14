@@ -79,7 +79,7 @@ jobs:
           FLOPS='${{ toJson(matrix.flops) }}'
           echo "$FLOPS" | node -e "
             const flops = JSON.parse(require('fs').readFileSync(0,'utf8'));
-            process.stdout.write(flops.join('\n'));
+            process.stdout.write(flops.length > 0 ? flops.join('\n') + '\n' : '');
           " > /tmp/flops.txt
           FAILED=0
           while IFS= read -r flop; do
