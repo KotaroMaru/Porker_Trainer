@@ -229,11 +229,29 @@ function averageStrategyFromEntry(entry: RegretEntry | undefined, actionCount: n
   return frequencies
 }
 
-/** DCFRソルバー本体。 */
-export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrSolution<Hand> {
-  const maxIterations = opts.maxIterations ?? 500
-  const targetExploitability = opts.targetExploitability ?? 0.005 // pot比0.5%
-  const checkEvery = opts.checkEveryIterations ?? 50
+/**
+ * P9-1: 反復を外部から刻んで進められる再開可能CFRセッション。
+ * DCFRの割引係数は反復番号`t`のみに依存し、regretTable(このセッションのクロージャに
+ * 保持される内部状態)は`advance()`呼び出しをまたいで連続する。そのため
+ * 「nずつ複数回advance」は「一括でn回分advance」とビット等価になる
+ * (cfr.test.tsの再開可能セッション等価ゲートで保証)。この性質により、
+ * プレイ中の粗いソルブをそのまま background で精密収束まで継続できる(P9-4)。
+ */
+export interface CfrSession<Hand> {
+  readonly game: CfrGame<Hand>
+  readonly iterationsRun: number
+  /** 次のn反復を進める(内部の反復カウンタtは連続する)。収束判定は行わない。 */
+  advance(nIterations: number): void
+  /** 現時点の平均戦略でexploitability(pot比)を測定する。呼び出しごとに計算し直す高コスト処理。 */
+  measureExploitability(): number
+  /** 現時点の平均戦略を返す。 */
+  getStrategy(node: DecisionNode): NodeStrategy
+  /** 現時点の平均戦略における各プレイヤーのゲーム値(bb)。 */
+  gameValue(): [number, number]
+}
+
+/** solveCfr本体だったクロージャをセッションとして切り出したもの。数値ロジックは無変更。 */
+export function createCfrSession<Hand>(game: CfrGame<Hand>, opts: Pick<CfrOptions, 'alpha' | 'beta' | 'gamma'> = {}): CfrSession<Hand> {
   const alpha = opts.alpha ?? 1.5
   const beta = opts.beta ?? 0
   const gamma = opts.gamma ?? 2
@@ -457,34 +475,67 @@ export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrS
   }
 
   let iterationsRun = 0
-  let exploitability = Infinity
   // ルートのリーチ和は反復間で不変(initialReachは固定)なので1回だけ計算する。
   const initialSum0 = uni0.initialReach.reduce((a, b) => a + b, 0)
   const initialSum1 = uni1.initialReach.reduce((a, b) => a + b, 0)
 
-  for (let t = 1; t <= maxIterations; t++) {
-    const reach0 = new Float64Array(uni0.initialReach)
-    const reach1 = new Float64Array(uni1.initialReach)
-    // 戻り値(瞬間戦略でのCFR値)は後悔値・平均戦略の更新にのみ使う。振動するため
-    // ゲーム値の算出には使わない(平均戦略ベースのselfPlayValueを別途使う)。
-    walk(game.root, reach0, reach1, initialSum0, initialSum1, t)
-    iterationsRun = t
+  function advance(nIterations: number): void {
+    for (let i = 0; i < nIterations; i++) {
+      const t = iterationsRun + 1
+      const reach0 = new Float64Array(uni0.initialReach)
+      const reach1 = new Float64Array(uni1.initialReach)
+      // 戻り値(瞬間戦略でのCFR値)は後悔値・平均戦略の更新にのみ使う。振動するため
+      // ゲーム値の算出には使わない(平均戦略ベースのselfPlayValueを別途使う)。
+      walk(game.root, reach0, reach1, initialSum0, initialSum1, t)
+      iterationsRun = t
+    }
+  }
+
+  return {
+    game,
+    get iterationsRun() {
+      return iterationsRun
+    },
+    advance,
+    measureExploitability: () => computeExploitability(game, getAverageStrategy, evalCache),
+    getStrategy: (node) => ({ actionLabels: node.actionLabels, frequencies: getAverageStrategy(node) }),
+    gameValue: () => selfPlayValue(game, getAverageStrategy, evalCache),
+  }
+}
+
+/**
+ * DCFRソルバー本体。P9-1でcreateCfrSessionの薄いラッパーに再実装した
+ * (数値ロジックは無変更・観測可能な挙動も不変)。checkEveryIterationsの倍数
+ * (と最終反復)ちょうどでexploitabilityを測定するタイミングも従来と同一になるよう、
+ * advance()をチェックポイント境界で刻んで呼ぶ。
+ */
+export function solveCfr<Hand>(game: CfrGame<Hand>, opts: CfrOptions = {}): CfrSolution<Hand> {
+  const maxIterations = opts.maxIterations ?? 500
+  const targetExploitability = opts.targetExploitability ?? 0.005 // pot比0.5%
+  const checkEvery = opts.checkEveryIterations ?? 50
+
+  const session = createCfrSession(game, { alpha: opts.alpha, beta: opts.beta, gamma: opts.gamma })
+  let exploitability = Infinity
+
+  while (session.iterationsRun < maxIterations) {
+    const current = session.iterationsRun
+    const nextCheckpoint = Math.min(Math.ceil((current + 1) / checkEvery) * checkEvery, maxIterations)
+    session.advance(nextCheckpoint - current)
+    const t = session.iterationsRun
 
     if (t % checkEvery === 0 || t === maxIterations) {
-      exploitability = computeExploitability(game, getAverageStrategy, evalCache)
+      exploitability = session.measureExploitability()
       opts.onProgress?.(t, exploitability)
       if (exploitability < targetExploitability) break
       if (opts.shouldCancel?.()) break
     }
   }
 
-  const gameValue = selfPlayValue(game, getAverageStrategy, evalCache)
-
   return {
     game,
-    iterationsRun,
+    iterationsRun: session.iterationsRun,
     exploitability,
-    getStrategy: (node) => ({ actionLabels: node.actionLabels, frequencies: getAverageStrategy(node) }),
-    gameValue,
+    getStrategy: (node) => session.getStrategy(node),
+    gameValue: session.gameValue(),
   }
 }
