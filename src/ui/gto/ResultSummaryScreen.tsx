@@ -92,12 +92,11 @@ export function ResultSummaryScreen() {
         {result.decisionSummaries.length}決断中 正解{result.decisionSummaries.filter((d) => d.verdict === 'correct').length}
       </div>
 
-      {/* P7-6b/P8-3: ターンはプレイ用に粗くソルブしているため、ハンド終了後にバックグラウンドで
-          精密再ソルブしている間は進捗バーで伝える(完了するとverdict/EVロスが更新されうる)。 */}
+      {/* P9-5: 精密化中でも結果とレビューはすぐ使える。完了時にverdict/EVロスが更新されうることを明示する。 */}
       {refining && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
           <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
-            ターンを精密解析中…{refineProgress !== null && ` (${Math.round(refineProgress * 100)}%)`}
+            精度を高めています。レビューはすぐに確認できます…{refineProgress !== null && ` (${Math.round(refineProgress * 100)}%)`}
           </div>
           <div style={{ height: 6, borderRadius: 3, background: 'var(--panel-bg-light)', overflow: 'hidden' }}>
             <div

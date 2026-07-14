@@ -140,7 +140,7 @@ describe('ResultSummaryScreen', () => {
     expect(screen.queryByText('9')).not.toBeInTheDocument()
   })
 
-  it('P8-3: refining中はrefineProgressに応じた進捗バー+パーセント表示が出る', () => {
+  it('P9-5: refining中もレビューがすぐ使えることを示し、refineProgressに応じた進捗を表示する', () => {
     const result: HandResult = {
       endedBy: 'showdown',
       userNetBb: 0,
@@ -153,7 +153,7 @@ describe('ResultSummaryScreen', () => {
     resetStore(snap)
     const { container } = render(<ResultSummaryScreen />)
 
-    expect(screen.getByText('ターンを精密解析中… (42%)')).toBeInTheDocument()
+    expect(screen.getByText('精度を高めています。レビューはすぐに確認できます… (42%)')).toBeInTheDocument()
     const bar = container.querySelector('[style*="width: 42%"]')
     expect(bar).not.toBeNull()
   })
