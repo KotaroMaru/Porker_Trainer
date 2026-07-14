@@ -1,0 +1,572 @@
+[
+  {
+    "flop": "2d2h7c",
+    "expl_pot_frac": 0.0047492636,
+    "seconds": 249.391241004,
+    "bytes": 18633
+  },
+  {
+    "flop": "3c3h7s",
+    "expl_pot_frac": 0.0047492636,
+    "seconds": 242.484518423,
+    "bytes": 18633
+  },
+  {
+    "flop": "3h3cJh",
+    "expl_pot_frac": 0.0048823156,
+    "seconds": 226.866106478,
+    "bytes": 16913
+  },
+  {
+    "flop": "3s3h3c",
+    "expl_pot_frac": 0.0040467116,
+    "seconds": 184.072616706,
+    "bytes": 18633
+  },
+  {
+    "flop": "4c4dJs",
+    "expl_pot_frac": 0.0045812665,
+    "seconds": 221.889177161,
+    "bytes": 16913
+  },
+  {
+    "flop": "4h3s2s",
+    "expl_pot_frac": 0.0046403827,
+    "seconds": 165.960351409,
+    "bytes": 18633
+  },
+  {
+    "flop": "5c3d2s",
+    "expl_pot_frac": 0.0048317416,
+    "seconds": 280.016955914,
+    "bytes": 18633
+  },
+  {
+    "flop": "5c4c2h",
+    "expl_pot_frac": 0.0046403827,
+    "seconds": 143.266813723,
+    "bytes": 18633
+  },
+  {
+    "flop": "5c4s2h",
+    "expl_pot_frac": 0.0048317416,
+    "seconds": 280.309764984,
+    "bytes": 18633
+  },
+  {
+    "flop": "5d3h2h",
+    "expl_pot_frac": 0.0046403827,
+    "seconds": 161.729559406,
+    "bytes": 18633
+  },
+  {
+    "flop": "5d5h9h",
+    "expl_pot_frac": 0.004929577,
+    "seconds": 190.81547102,
+    "bytes": 18117
+  },
+  {
+    "flop": "5s4d3h",
+    "expl_pot_frac": 0.0045565865,
+    "seconds": 293.859213731,
+    "bytes": 18633
+  },
+  {
+    "flop": "5s4h3s",
+    "expl_pot_frac": 0.00476899,
+    "seconds": 159.695859096,
+    "bytes": 18633
+  },
+  {
+    "flop": "6c4h2c",
+    "expl_pot_frac": 0.004883564,
+    "seconds": 142.054046371,
+    "bytes": 18633
+  },
+  {
+    "flop": "6c6h3h",
+    "expl_pot_frac": 0.004718191,
+    "seconds": 206.885053982,
+    "bytes": 18633
+  },
+  {
+    "flop": "6h5c4d",
+    "expl_pot_frac": 0.004574585,
+    "seconds": 343.83118515,
+    "bytes": 18633
+  },
+  {
+    "flop": "7c6c2d",
+    "expl_pot_frac": 0.0045696837,
+    "seconds": 191.824237472,
+    "bytes": 18633
+  },
+  {
+    "flop": "7h4d3d",
+    "expl_pot_frac": 0.0049661463,
+    "seconds": 155.775738799,
+    "bytes": 18633
+  },
+  {
+    "flop": "7h5s2h",
+    "expl_pot_frac": 0.004708932,
+    "seconds": 196.365266422,
+    "bytes": 18633
+  },
+  {
+    "flop": "7h7s4c",
+    "expl_pot_frac": 0.004765551,
+    "seconds": 219.199657903,
+    "bytes": 18633
+  },
+  {
+    "flop": "7h7sKd",
+    "expl_pot_frac": 0.0047348714,
+    "seconds": 316.974122057,
+    "bytes": 16999
+  },
+  {
+    "flop": "7s7cQc",
+    "expl_pot_frac": 0.004871906,
+    "seconds": 165.72405761,
+    "bytes": 16827
+  },
+  {
+    "flop": "8c8d8s",
+    "expl_pot_frac": 0.0049144397,
+    "seconds": 143.408071893,
+    "bytes": 18633
+  },
+  {
+    "flop": "8c8h2d",
+    "expl_pot_frac": 0.0046283836,
+    "seconds": 202.65710031,
+    "bytes": 18633
+  },
+  {
+    "flop": "8d5s3c",
+    "expl_pot_frac": 0.004678264,
+    "seconds": 484.243097711,
+    "bytes": 18633
+  },
+  {
+    "flop": "8d6s3h",
+    "expl_pot_frac": 0.0047956062,
+    "seconds": 469.727855536,
+    "bytes": 18633
+  },
+  {
+    "flop": "8d7c4s",
+    "expl_pot_frac": 0.004549651,
+    "seconds": 484.972473245,
+    "bytes": 18633
+  },
+  {
+    "flop": "8h7c6c",
+    "expl_pot_frac": 0.004804802,
+    "seconds": 186.979742123,
+    "bytes": 18633
+  },
+  {
+    "flop": "8s4h2c",
+    "expl_pot_frac": 0.0049046143,
+    "seconds": 313.327777744,
+    "bytes": 18633
+  },
+  {
+    "flop": "8s6d5s",
+    "expl_pot_frac": 0.0046878005,
+    "seconds": 204.01107253,
+    "bytes": 18633
+  },
+  {
+    "flop": "8s7h4h",
+    "expl_pot_frac": 0.0035273118,
+    "seconds": 258.265169811,
+    "bytes": 18633
+  },
+  {
+    "flop": "9c3h2c",
+    "expl_pot_frac": 0.0048162057,
+    "seconds": 198.809373899,
+    "bytes": 18117
+  },
+  {
+    "flop": "9c6s2h",
+    "expl_pot_frac": 0.0046740505,
+    "seconds": 360.415357013,
+    "bytes": 18117
+  },
+  {
+    "flop": "9c8d5d",
+    "expl_pot_frac": 0.004923156,
+    "seconds": 205.251976763,
+    "bytes": 18117
+  },
+  {
+    "flop": "9d8d7d",
+    "expl_pot_frac": 0.004946524,
+    "seconds": 85.00349497,
+    "bytes": 18117
+  },
+  {
+    "flop": "9d8h7d",
+    "expl_pot_frac": 0.0047018775,
+    "seconds": 237.344869695,
+    "bytes": 18117
+  },
+  {
+    "flop": "9h8s6s",
+    "expl_pot_frac": 0.0045264214,
+    "seconds": 198.966274955,
+    "bytes": 18117
+  },
+  {
+    "flop": "9h8s7d",
+    "expl_pot_frac": 0.004048856,
+    "seconds": 406.950023235,
+    "bytes": 18117
+  },
+  {
+    "flop": "9s7d6c",
+    "expl_pot_frac": 0.004702857,
+    "seconds": 277.530253912,
+    "bytes": 18117
+  },
+  {
+    "flop": "9s7h6s",
+    "expl_pot_frac": 0.004797473,
+    "seconds": 176.217525824,
+    "bytes": 18117
+  },
+  {
+    "flop": "9s8d6h",
+    "expl_pot_frac": 0.004955494,
+    "seconds": 299.39449215,
+    "bytes": 18117
+  },
+  {
+    "flop": "AcKcTs",
+    "expl_pot_frac": 0.0048548235,
+    "seconds": 159.855600801,
+    "bytes": 13903
+  },
+  {
+    "flop": "AcKdJh",
+    "expl_pot_frac": 0.0045715217,
+    "seconds": 208.33105298,
+    "bytes": 13215
+  },
+  {
+    "flop": "AcQc4s",
+    "expl_pot_frac": 0.004696508,
+    "seconds": 117.020110694,
+    "bytes": 14591
+  },
+  {
+    "flop": "Ad7s5s",
+    "expl_pot_frac": 0.0049303197,
+    "seconds": 146.01904719,
+    "bytes": 16225
+  },
+  {
+    "flop": "AdKcQd",
+    "expl_pot_frac": 0.0046109287,
+    "seconds": 233.807391435,
+    "bytes": 13215
+  },
+  {
+    "flop": "AdQh6c",
+    "expl_pot_frac": 0.004790196,
+    "seconds": 346.362338613,
+    "bytes": 14591
+  },
+  {
+    "flop": "Ah8s4c",
+    "expl_pot_frac": 0.0047699204,
+    "seconds": 205.193474903,
+    "bytes": 16225
+  },
+  {
+    "flop": "AhKc4d",
+    "expl_pot_frac": 0.004995173,
+    "seconds": 246.237499881,
+    "bytes": 14763
+  },
+  {
+    "flop": "AhKsJh",
+    "expl_pot_frac": 0.004927086,
+    "seconds": 123.664814129,
+    "bytes": 13215
+  },
+  {
+    "flop": "AhQsTc",
+    "expl_pot_frac": 0.0045372588,
+    "seconds": 228.911519205,
+    "bytes": 13731
+  },
+  {
+    "flop": "As6s5c",
+    "expl_pot_frac": 0.004635698,
+    "seconds": 159.64277447,
+    "bytes": 16225
+  },
+  {
+    "flop": "AsAd9h",
+    "expl_pot_frac": 0.0047604674,
+    "seconds": 137.631627001,
+    "bytes": 13387
+  },
+  {
+    "flop": "AsJs6s",
+    "expl_pot_frac": 0.0036898872,
+    "seconds": 73.710578203,
+    "bytes": 14677
+  },
+  {
+    "flop": "AsKs9c",
+    "expl_pot_frac": 0.0049845725,
+    "seconds": 142.112703028,
+    "bytes": 14247
+  },
+  {
+    "flop": "AsQsJs",
+    "expl_pot_frac": 0.0047989064,
+    "seconds": 69.992354076,
+    "bytes": 13215
+  },
+  {
+    "flop": "AsTc2d",
+    "expl_pot_frac": 0.004918367,
+    "seconds": 252.723202515,
+    "bytes": 15365
+  },
+  {
+    "flop": "Jd4d2d",
+    "expl_pot_frac": 0.0042222515,
+    "seconds": 119.723285109,
+    "bytes": 16913
+  },
+  {
+    "flop": "Jd7h5h",
+    "expl_pot_frac": 0.004533155,
+    "seconds": 266.420292632,
+    "bytes": 16913
+  },
+  {
+    "flop": "Jd8h7h",
+    "expl_pot_frac": 0.004738027,
+    "seconds": 156.441048723,
+    "bytes": 16913
+  },
+  {
+    "flop": "Js6c5h",
+    "expl_pot_frac": 0.0047131046,
+    "seconds": 270.720464283,
+    "bytes": 16913
+  },
+  {
+    "flop": "Js9s5s",
+    "expl_pot_frac": 0.0048838444,
+    "seconds": 92.286433128,
+    "bytes": 16397
+  },
+  {
+    "flop": "Js9s8c",
+    "expl_pot_frac": 0.0045758276,
+    "seconds": 213.166624837,
+    "bytes": 16397
+  },
+  {
+    "flop": "Kc4s3d",
+    "expl_pot_frac": 0.0042773853,
+    "seconds": 424.757456921,
+    "bytes": 16999
+  },
+  {
+    "flop": "KcJc2c",
+    "expl_pot_frac": 0.0046591037,
+    "seconds": 68.845234972,
+    "bytes": 15451
+  },
+  {
+    "flop": "KcQcJd",
+    "expl_pot_frac": 0.004892187,
+    "seconds": 137.917406338,
+    "bytes": 13645
+  },
+  {
+    "flop": "KcTd2d",
+    "expl_pot_frac": 0.0049274387,
+    "seconds": 169.95075484,
+    "bytes": 16139
+  },
+  {
+    "flop": "KcTd8s",
+    "expl_pot_frac": 0.004672686,
+    "seconds": 329.740697926,
+    "bytes": 16139
+  },
+  {
+    "flop": "Kd5h2d",
+    "expl_pot_frac": 0.0047205607,
+    "seconds": 195.210833856,
+    "bytes": 16999
+  },
+  {
+    "flop": "KdJd5c",
+    "expl_pot_frac": 0.004656699,
+    "seconds": 121.793299534,
+    "bytes": 15451
+  },
+  {
+    "flop": "KdTs8s",
+    "expl_pot_frac": 0.004663687,
+    "seconds": 179.341018501,
+    "bytes": 16139
+  },
+  {
+    "flop": "Kh9s6c",
+    "expl_pot_frac": 0.004521341,
+    "seconds": 256.017550518,
+    "bytes": 16483
+  },
+  {
+    "flop": "KhJc3c",
+    "expl_pot_frac": 0.0047624186,
+    "seconds": 156.420091921,
+    "bytes": 15279
+  },
+  {
+    "flop": "KhJsTd",
+    "expl_pot_frac": 0.0049104476,
+    "seconds": 221.179733017,
+    "bytes": 14419
+  },
+  {
+    "flop": "KhKcTd",
+    "expl_pot_frac": 0.0045038713,
+    "seconds": 249.200423838,
+    "bytes": 14591
+  },
+  {
+    "flop": "KhKdAs",
+    "expl_pot_frac": 0.0048556877,
+    "seconds": 127.369901228,
+    "bytes": 13387
+  },
+  {
+    "flop": "KhKdKs",
+    "expl_pot_frac": 0.0047350796,
+    "seconds": 126.237721128,
+    "bytes": 13989
+  },
+  {
+    "flop": "Ks5s4d",
+    "expl_pot_frac": 0.0047205607,
+    "seconds": 201.519242343,
+    "bytes": 16999
+  },
+  {
+    "flop": "Ks9s7s",
+    "expl_pot_frac": 0.0047681,
+    "seconds": 88.91289552,
+    "bytes": 16483
+  },
+  {
+    "flop": "KsQs6h",
+    "expl_pot_frac": 0.0046480987,
+    "seconds": 148.351273582,
+    "bytes": 15365
+  },
+  {
+    "flop": "KsTd9h",
+    "expl_pot_frac": 0.004968947,
+    "seconds": 435.196739833,
+    "bytes": 15623
+  },
+  {
+    "flop": "Qc5d3h",
+    "expl_pot_frac": 0.0048872223,
+    "seconds": 434.479456741,
+    "bytes": 16827
+  },
+  {
+    "flop": "Qc7d6s",
+    "expl_pot_frac": 0.0049383743,
+    "seconds": 351.59526658,
+    "bytes": 16827
+  },
+  {
+    "flop": "QcTs4h",
+    "expl_pot_frac": 0.0047278027,
+    "seconds": 295.637197497,
+    "bytes": 15967
+  },
+  {
+    "flop": "Qd5s2s",
+    "expl_pot_frac": 0.0047799195,
+    "seconds": 185.569831178,
+    "bytes": 16827
+  },
+  {
+    "flop": "Qh7c6c",
+    "expl_pot_frac": 0.0040189917,
+    "seconds": 193.76032916,
+    "bytes": 16827
+  },
+  {
+    "flop": "QhJc8c",
+    "expl_pot_frac": 0.0049097207,
+    "seconds": 182.803690723,
+    "bytes": 15107
+  },
+  {
+    "flop": "Qs8h7c",
+    "expl_pot_frac": 0.004955829,
+    "seconds": 423.138100198,
+    "bytes": 16827
+  },
+  {
+    "flop": "Tc7s3d",
+    "expl_pot_frac": 0.0047133476,
+    "seconds": 326.722829229,
+    "bytes": 17773
+  },
+  {
+    "flop": "TcTh8d",
+    "expl_pot_frac": 0.004893228,
+    "seconds": 224.916139901,
+    "bytes": 17085
+  },
+  {
+    "flop": "TcTs4d",
+    "expl_pot_frac": 0.0046557453,
+    "seconds": 233.819173942,
+    "bytes": 17085
+  },
+  {
+    "flop": "Td4h2s",
+    "expl_pot_frac": 0.004894407,
+    "seconds": 261.241242257,
+    "bytes": 17773
+  },
+  {
+    "flop": "Th4h3c",
+    "expl_pot_frac": 0.0045595807,
+    "seconds": 185.126965266,
+    "bytes": 17773
+  },
+  {
+    "flop": "Th7s6s",
+    "expl_pot_frac": 0.0049909996,
+    "seconds": 166.795369374,
+    "bytes": 17773
+  },
+  {
+    "flop": "Ts7s4c",
+    "expl_pot_frac": 0.004873611,
+    "seconds": 149.691081877,
+    "bytes": 17773
+  }
+]
