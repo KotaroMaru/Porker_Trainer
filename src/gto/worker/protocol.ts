@@ -8,7 +8,7 @@ import type { DecodedNode } from '../loader/binaryFormat'
  *
  * P6 Step B3(プロトコルv2): 旧v1はsolveTurnSubgame1回で全決断ノード(ターン部分
  * ゲームで約11k)の戦略を丸ごとシリアライズしていた(潜在的性能バグ、EVを足すと
- * 数十MB級になる)。v2はWorkerが最新1ソルブの解を保持し(D2「収穫」パターン)、
+ * 数十MB級になる)。v2はWorkerがソルブの解を保持し(D2「収穫」パターン)、
  * UIはgetNodesで実際に必要なノード(手番決断+その応答子、1ハンドあたり数個)
  * だけを個別取得する。DecodedNode(loader/binaryFormat.ts、Rust事前計算パイプラインと
  * 同じ形状)をそのまま使うことで、grading.gradeDecision等の下流モジュールが
@@ -40,12 +40,22 @@ export interface SolveStreetRequest {
 export interface GetNodesRequest {
   kind: 'getNodes'
   requestId: string
-  /** solveStreetの結果で受け取ったsolveId。直近のソルブ以外を要求するとエラーになる。 */
+  /** solveStreetの結果で受け取ったsolveId。Workerが保持していないIDならエラーになる。 */
   solveId: string
   nodeIds: string[]
 }
 
-export type WorkerRequest = SolveStreetRequest | GetNodesRequest | { kind: 'cancel'; requestId: string }
+export interface RefineSessionRequest {
+  kind: 'refineSession'
+  requestId: string
+  solveId: string
+  targetExploitability: number
+  /** solveStreetで実行済みの反復を含む総反復数の上限。 */
+  maxIterations: number
+  chunkIterations: number
+}
+
+export type WorkerRequest = SolveStreetRequest | RefineSessionRequest | GetNodesRequest | { kind: 'cancel'; requestId: string }
 
 export interface SolveResultSummary {
   solveId: string
@@ -68,6 +78,22 @@ export interface ResultMessage {
   elapsedMs: number
 }
 
+export interface RefineProgressMessage {
+  kind: 'refineProgress'
+  requestId: string
+  solveId: string
+  iterationsRun: number
+  exploitability: number
+}
+
+export interface RefineDoneMessage {
+  kind: 'refineDone'
+  requestId: string
+  solveId: string
+  iterationsRun: number
+  exploitability: number
+}
+
 export interface NodesMessage {
   kind: 'nodes'
   requestId: string
@@ -81,4 +107,4 @@ export interface ErrorMessage {
   message: string
 }
 
-export type WorkerResponse = ProgressMessage | ResultMessage | NodesMessage | ErrorMessage
+export type WorkerResponse = ProgressMessage | ResultMessage | RefineProgressMessage | RefineDoneMessage | NodesMessage | ErrorMessage

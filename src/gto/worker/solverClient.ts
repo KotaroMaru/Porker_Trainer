@@ -1,4 +1,4 @@
-import type { SolveStreetRequest, GetNodesRequest, WorkerResponse, SolveResultSummary } from './protocol'
+import type { SolveStreetRequest, RefineSessionRequest, GetNodesRequest, WorkerResponse, SolveResultSummary } from './protocol'
 import type { DecodedNode } from '../loader/binaryFormat'
 
 export type { SolveResultSummary } from './protocol'
@@ -13,6 +13,17 @@ export interface SolveHandle {
   /** 解が完成するかキャンセルされるとresolve/rejectするPromise。 */
   promise: Promise<SolveResultSummary>
   /** ソルブを中断する(Workerにキャンセルを通知し、途中経過を破棄する)。 */
+  cancel: () => void
+}
+
+export interface RefineResult {
+  solveId: string
+  iterationsRun: number
+  exploitability: number
+}
+
+export interface RefineHandle {
+  promise: Promise<RefineResult>
   cancel: () => void
 }
 
@@ -42,6 +53,14 @@ export class SolverClient {
       reject: (err: Error) => void
     }
   >()
+  private pendingRefinements = new Map<
+    string,
+    {
+      resolve: (v: RefineResult) => void
+      reject: (err: Error) => void
+      onProgress?: (iterationsRun: number, exploitability: number) => void
+    }
+  >()
 
   constructor() {
     this.worker = new Worker(new URL('./solverWorker.ts', import.meta.url), { type: 'module' })
@@ -52,6 +71,8 @@ export class SolverClient {
       this.pending.clear()
       for (const [, p] of this.pendingNodes) p.reject(new Error(ev.message))
       this.pendingNodes.clear()
+      for (const [, p] of this.pendingRefinements) p.reject(new Error(ev.message))
+      this.pendingRefinements.clear()
     }
   }
 
@@ -66,17 +87,33 @@ export class SolverClient {
       pending?.resolve(msg.solution)
       return
     }
+    if (msg.kind === 'refineProgress') {
+      this.pendingRefinements.get(msg.requestId)?.onProgress?.(msg.iterationsRun, msg.exploitability)
+      return
+    }
+    if (msg.kind === 'refineDone') {
+      const pending = this.pendingRefinements.get(msg.requestId)
+      this.pendingRefinements.delete(msg.requestId)
+      pending?.resolve({ solveId: msg.solveId, iterationsRun: msg.iterationsRun, exploitability: msg.exploitability })
+      return
+    }
     if (msg.kind === 'nodes') {
       const pending = this.pendingNodes.get(msg.requestId)
       this.pendingNodes.delete(msg.requestId)
       pending?.resolve(msg.nodes)
       return
     }
-    // error: solveStreet系・getNodes系どちらのpendingにも該当しうる
+    // error: solveStreet/refineSession/getNodesのどのpendingにも該当しうる
     const solvePending = this.pending.get(msg.requestId)
     if (solvePending) {
       this.pending.delete(msg.requestId)
       solvePending.reject(new Error(msg.message))
+      return
+    }
+    const refinePending = this.pendingRefinements.get(msg.requestId)
+    if (refinePending) {
+      this.pendingRefinements.delete(msg.requestId)
+      refinePending.reject(new Error(msg.message))
       return
     }
     const nodesPending = this.pendingNodes.get(msg.requestId)
@@ -84,6 +121,22 @@ export class SolverClient {
       this.pendingNodes.delete(msg.requestId)
       nodesPending.reject(new Error(msg.message))
     }
+  }
+
+  refineSession(
+    solveId: string,
+    opts: Pick<RefineSessionRequest, 'targetExploitability' | 'maxIterations' | 'chunkIterations'>,
+    onProgress?: (iterationsRun: number, exploitability: number) => void,
+  ): RefineHandle {
+    const requestId = nextRequestId()
+    const promise = new Promise<RefineResult>((resolve, reject) => {
+      this.pendingRefinements.set(requestId, { resolve, reject, onProgress })
+    })
+    this.worker.postMessage({ kind: 'refineSession', requestId, solveId, ...opts } satisfies RefineSessionRequest)
+    const cancel = () => {
+      this.worker.postMessage({ kind: 'cancel', requestId })
+    }
+    return { promise, cancel }
   }
 
   solveStreet(request: Omit<SolveStreetRequest, 'kind' | 'requestId'>, onProgress?: (iterationsRun: number, exploitability: number) => void): SolveHandle {
@@ -115,5 +168,7 @@ export class SolverClient {
     this.pending.clear()
     for (const [, p] of this.pendingNodes) p.reject(new Error('SolverClient terminated'))
     this.pendingNodes.clear()
+    for (const [, p] of this.pendingRefinements) p.reject(new Error('SolverClient terminated'))
+    this.pendingRefinements.clear()
   }
 }

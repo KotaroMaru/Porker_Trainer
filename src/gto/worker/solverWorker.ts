@@ -1,5 +1,5 @@
-import { solveCfr } from '../solver/cfr'
-import type { CfrGame, DecisionNode } from '../solver/cfr'
+import { createCfrSession } from '../solver/cfr'
+import type { CfrGame, CfrSession, DecisionNode } from '../solver/cfr'
 import { extractDecisionEvs } from '../solver/nodeEvs'
 import { scoreComboOnBoard } from '../solver/handEval'
 import { buildTurnSubgameTree, buildStreetTree } from '../tree/actionTree'
@@ -13,11 +13,10 @@ import type { WorkerRequest, WorkerResponse, SolveResultSummary } from './protoc
 // で読み込まれるWeb Workerのエントリポイント。
 //
 // P6 Step B3(プロトコルv2): 全決断ノードの戦略を丸ごとシリアライズしていた旧実装
-// (潜在的性能バグ)を廃止し、Workerが最新1ソルブの解(索引+平均戦略+EV)を
+// (潜在的性能バグ)を廃止し、Workerがソルブの解(セッション+索引+EV)を
 // 保持して、UIがgetNodesで必要なノードだけを個別取得する「収穫」パターン
-// (D2)に置き換えた。1 Worker内で保持するソルブは常に1つ(次のsolveStreetで
-// 前のcurrentSolveは自然に上書きされる。呼び出し側は上書き前に必要なノードを
-// 収穫し終えている前提)。
+// (D2)に置き換えた。P9-2ではsolveIdごとのセッションを保持し、別ストリートを
+// 解いた後も以前のセッションを継続精密化できる。
 
 function comboCards(combo: Combo): string[] {
   return combo.map((c) => `${c.rank}${c.suit}`)
@@ -27,24 +26,32 @@ function cardKeyLocal(c: Card): string {
   return `${c.rank}${c.suit}`
 }
 
-let currentCancelled = false
 let solveCounter = 0
-let currentSolve: {
-  solveId: string
+interface StoredSolve {
+  session: CfrSession<Combo>
   index: Map<string, DecisionNode>
-  getStrategy: (node: DecisionNode) => { actionLabels: string[]; frequencies: number[][] }
-  evs: Map<DecisionNode, Float32Array>
-} | null = null
+  evsCache: { iterationsRun: number; evs: Map<DecisionNode, Float32Array> } | null
+}
+
+const solveRegistry = new Map<string, StoredSolve>()
+const cancelledRequests = new Set<string>()
+
+function decisionEvs(stored: StoredSolve): Map<DecisionNode, Float32Array> {
+  if (stored.evsCache?.iterationsRun === stored.session.iterationsRun) return stored.evsCache.evs
+  const evs = extractDecisionEvs(stored.session.game, (node) => stored.session.getStrategy(node).frequencies)
+  stored.evsCache = { iterationsRun: stored.session.iterationsRun, evs }
+  return evs
+}
 
 function handleGetNodes(req: Extract<WorkerRequest, { kind: 'getNodes' }>): void {
   const { requestId } = req
   try {
-    if (!currentSolve || currentSolve.solveId !== req.solveId) {
-      throw new Error(`getNodes: no active solve matches solveId "${req.solveId}" (stale request? Workerは最新1ソルブしか保持しない)`)
-    }
+    const stored = solveRegistry.get(req.solveId)
+    if (!stored) throw new Error(`getNodes: no session matches solveId "${req.solveId}"`)
+    const evs = decisionEvs(stored)
     const nodes: Record<string, DecodedNode | null> = {}
     for (const nodeId of req.nodeIds) {
-      nodes[nodeId] = nodeDataAt(currentSolve.index, currentSolve.getStrategy, currentSolve.evs, nodeId)
+      nodes[nodeId] = nodeDataAt(stored.index, (node) => stored.session.getStrategy(node), evs, nodeId)
     }
     const msg: WorkerResponse = { kind: 'nodes', requestId, nodes }
     self.postMessage(msg)
@@ -55,7 +62,7 @@ function handleGetNodes(req: Extract<WorkerRequest, { kind: 'getNodes' }>): void
 }
 
 function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>): void {
-  currentCancelled = false
+  cancelledRequests.delete(req.requestId)
   const { requestId } = req
   const startTime = performance.now()
 
@@ -87,47 +94,119 @@ function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>)
       score: req.street === 'turn' ? scoreComboOnBoard : (combo: Combo) => scoreComboOnBoard(combo, boardKeys),
     }
 
-    const solution = solveCfr(game, {
-      maxIterations: req.maxIterations ?? 500,
-      targetExploitability: req.targetExploitability ?? 0.005,
-      checkEveryIterations: req.checkEveryIterations ?? 50,
-      onProgress: (iterationsRun, exploitability) => {
-        const msg: WorkerResponse = { kind: 'progress', requestId, iterationsRun, exploitability }
-        self.postMessage(msg)
-      },
-      shouldCancel: () => currentCancelled,
-    })
+    const maxIterations = req.maxIterations ?? 500
+    const targetExploitability = req.targetExploitability ?? 0.005
+    const checkEvery = req.checkEveryIterations ?? 50
+    const session = createCfrSession(game)
+    let exploitability = Infinity
 
-    const getAvgStrategy = (node: DecisionNode) => solution.getStrategy(node).frequencies
-    const evs = extractDecisionEvs(game, getAvgStrategy)
+    while (session.iterationsRun < maxIterations) {
+      const current = session.iterationsRun
+      const nextCheckpoint = Math.min(Math.ceil((current + 1) / checkEvery) * checkEvery, maxIterations)
+      session.advance(nextCheckpoint - current)
+      if (session.iterationsRun % checkEvery === 0 || session.iterationsRun === maxIterations) {
+        exploitability = session.measureExploitability()
+        const msg: WorkerResponse = { kind: 'progress', requestId, iterationsRun: session.iterationsRun, exploitability }
+        self.postMessage(msg)
+        if (exploitability < targetExploitability || cancelledRequests.has(requestId)) break
+      }
+    }
+
     const index = buildNodeIndex(tree)
 
     solveCounter += 1
     const solveId = `solve${solveCounter}`
-    currentSolve = { solveId, index, getStrategy: solution.getStrategy, evs }
+    solveRegistry.set(solveId, { session, index, evsCache: null })
 
     const resultSummary: SolveResultSummary = {
       solveId,
-      iterationsRun: solution.iterationsRun,
-      exploitability: solution.exploitability,
-      gameValue: solution.gameValue,
+      iterationsRun: session.iterationsRun,
+      exploitability,
+      gameValue: session.gameValue(),
     }
     const msg: WorkerResponse = { kind: 'result', requestId, solution: resultSummary, elapsedMs: performance.now() - startTime }
     self.postMessage(msg)
   } catch (err) {
     const msg: WorkerResponse = { kind: 'error', requestId, message: err instanceof Error ? err.message : String(err) }
     self.postMessage(msg)
+  } finally {
+    cancelledRequests.delete(requestId)
+  }
+}
+
+function yieldToWorkerEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function handleRefineSession(req: Extract<WorkerRequest, { kind: 'refineSession' }>): Promise<void> {
+  const { requestId, solveId } = req
+  cancelledRequests.delete(requestId)
+  try {
+    if (!Number.isInteger(req.chunkIterations) || req.chunkIterations <= 0) {
+      throw new Error('refineSession: chunkIterations must be a positive integer')
+    }
+    if (!Number.isInteger(req.maxIterations) || req.maxIterations < 0) {
+      throw new Error('refineSession: maxIterations must be a non-negative integer')
+    }
+    const stored = solveRegistry.get(solveId)
+    if (!stored) throw new Error(`refineSession: no session matches solveId "${solveId}"`)
+
+    const { session } = stored
+    let exploitability = session.measureExploitability()
+    while (
+      session.iterationsRun < req.maxIterations &&
+      exploitability >= req.targetExploitability &&
+      !cancelledRequests.has(requestId)
+    ) {
+      session.advance(Math.min(req.chunkIterations, req.maxIterations - session.iterationsRun))
+      exploitability = session.measureExploitability()
+      const progress: WorkerResponse = {
+        kind: 'refineProgress',
+        requestId,
+        solveId,
+        iterationsRun: session.iterationsRun,
+        exploitability,
+      }
+      self.postMessage(progress)
+      if (
+        session.iterationsRun >= req.maxIterations ||
+        exploitability < req.targetExploitability ||
+        cancelledRequests.has(requestId)
+      ) {
+        break
+      }
+      // マクロタスク境界を作り、別solveIdのgetNodesやこのrequestIdのcancelを処理可能にする。
+      await yieldToWorkerEventLoop()
+    }
+
+    const done: WorkerResponse = {
+      kind: 'refineDone',
+      requestId,
+      solveId,
+      iterationsRun: session.iterationsRun,
+      exploitability,
+    }
+    self.postMessage(done)
+  } catch (err) {
+    const msg: WorkerResponse = { kind: 'error', requestId, message: err instanceof Error ? err.message : String(err) }
+    self.postMessage(msg)
+  } finally {
+    cancelledRequests.delete(requestId)
   }
 }
 
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const req = ev.data
   if (req.kind === 'cancel') {
-    currentCancelled = true
+    cancelledRequests.add(req.requestId)
     return
   }
   if (req.kind === 'getNodes') {
     handleGetNodes(req)
+    return
+  }
+  if (req.kind === 'refineSession') {
+    void handleRefineSession(req)
     return
   }
   handleSolveStreet(req)
