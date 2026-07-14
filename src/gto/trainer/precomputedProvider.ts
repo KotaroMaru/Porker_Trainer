@@ -18,6 +18,7 @@ export function createPrecomputedProvider(solution: DecodedSolution, board: Card
       return result
     },
     progress: () => null,
+    refine: () => {},
     dispose: () => {},
   }
 }

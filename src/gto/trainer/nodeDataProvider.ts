@@ -16,6 +16,12 @@ import type { DecodedNode, DecodedSolution } from '../loader/binaryFormat'
 
 export type Street = 'flop' | 'turn' | 'river'
 
+export interface RefineOptions {
+  targetExploitability: number
+  maxIterations: number
+  chunkIterations: number
+}
+
 export interface StreetNodeProvider {
   readonly street: Street
   /** そのストリート開始時点のボード(flop=3枚, turn=4枚, river=5枚)。 */
@@ -26,8 +32,14 @@ export interface StreetNodeProvider {
   readonly ready: Promise<void>
   /** 指定nodeIdの決断ノードをDecodedNode形状で取得する(木に存在しないnodeIdはnull)。 */
   getNodes(nodeIds: string[]): Promise<Map<string, DecodedNode | null>>
-  /** ライブソルブ中の進捗(0..1)。ready解決後・事前計算解では常にnull。 */
+  /** 現在アクティブな初期ソルブ/精密化の進捗(0..1)。アイドル中・事前計算解ではnull。 */
   progress(): { fraction: number } | null
+  /**
+   * このストリートの既存セッションを背景で継続精密化する(P9-3)。fire-and-forget:
+   * 呼び出し直後にprogress()が非nullへ戻り、目標到達または反復上限到達後にnullへ戻る。
+   * 事前計算解ではno-op。ready未解決時の呼び出しは、初期ソルブ完了後に開始する。
+   */
+  refine(opts: RefineOptions): void
   /** このストリートのソルブを中断する(Worker実装ではcancelのみ、Workerごとの終了はfactory.dispose()側)。事前計算解では何もしない。 */
   dispose(): void
 }

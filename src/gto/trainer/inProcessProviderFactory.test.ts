@@ -22,6 +22,14 @@ const ipCombos: Combo[] = [
 ]
 const ipReach = [1, 1]
 
+function maxAbsoluteDifference(actual: ArrayLike<number>, expected: ArrayLike<number>): number {
+  let maxDifference = 0
+  for (let i = 0; i < actual.length; i++) {
+    maxDifference = Math.max(maxDifference, Math.abs(actual[i] - expected[i]))
+  }
+  return maxDifference
+}
+
 describe('createInProcessProviderFactory', () => {
   it('forLiveStreet(turn)のrootノードのactionLabelsがローカル構築の街木と一致する', async () => {
     const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
@@ -163,5 +171,41 @@ describe('createInProcessProviderFactory', () => {
     expect(provider.progress()).toBeNull()
 
     factory.dispose()
+  })
+
+  it('P9-3: 20反復の既存セッションを200反復まで継続し、一括200反復の戦略と一致する', async () => {
+    const input = {
+      street: 'river' as const,
+      board: board5,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    }
+    const coarseFactory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0, checkEveryIterations: 20 })
+    const coarse = coarseFactory.forLiveStreet(input)
+    const before = (await coarse.getNodes([''])).get('')!
+    const beforeFreqs = Array.from(before.freqs)
+
+    coarse.refine({ targetExploitability: 0, maxIterations: 200, chunkIterations: 20 })
+    expect(coarse.progress()).toBeNull() // 同期版は呼び出しから戻る時点で完了済み。
+    const after = (await coarse.getNodes([''])).get('')!
+
+    const referenceFactory = createInProcessProviderFactory({ maxIterations: 200, targetExploitability: 0, checkEveryIterations: 20 })
+    const reference = referenceFactory.forLiveStreet(input)
+    const expected = (await reference.getNodes([''])).get('')!
+
+    // DCFRは反復番号に依存するため、20でリセットして180回やり直した戦略にはならない。
+    // P9-1のチャンク分割等価性により、既存20+追加180は一括200の既知チェックポイントへ収束する。
+    const beforeStrategyError = maxAbsoluteDifference(beforeFreqs, expected.freqs)
+    const afterStrategyError = maxAbsoluteDifference(after.freqs, expected.freqs)
+    expect(afterStrategyError).toBeLessThanOrEqual(1e-7) // Float32戦略頻度の明示許容誤差。
+    expect(afterStrategyError).toBeLessThan(beforeStrategyError)
+    expect(maxAbsoluteDifference(after.evsBb, expected.evsBb)).toBeLessThanOrEqual(1e-6) // EV(bb)の明示許容誤差。
+
+    coarseFactory.dispose()
+    referenceFactory.dispose()
   })
 })

@@ -39,8 +39,10 @@ describe('createPrecomputedProvider (実.binフィクスチャによる統合テ
     expect(nodes.get('not-a-real-node-id')).toBeNull()
   })
 
-  it('progress()は常にnull、dispose()は例外を投げない', () => {
+  it('progress()は常にnull、refine()/dispose()は例外を投げない', () => {
     const provider = createPrecomputedProvider(solution, solution.flop)
+    expect(provider.progress()).toBeNull()
+    expect(() => provider.refine({ targetExploitability: 0, maxIterations: 200, chunkIterations: 20 })).not.toThrow()
     expect(provider.progress()).toBeNull()
     expect(() => provider.dispose()).not.toThrow()
   })

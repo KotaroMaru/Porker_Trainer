@@ -6,7 +6,7 @@
 
 import { SolverClient } from './solverClient'
 import type { DecodedNode } from '../loader/binaryFormat'
-import type { NodeProviderFactory, StreetNodeProvider, StreetSolveInput } from '../trainer/nodeDataProvider'
+import type { NodeProviderFactory, RefineOptions, StreetNodeProvider, StreetSolveInput } from '../trainer/nodeDataProvider'
 import { createPrecomputedProvider } from '../trainer/precomputedProvider'
 
 export function createWorkerProviderFactory(): NodeProviderFactory {
@@ -21,6 +21,10 @@ export function createWorkerProviderFactory(): NodeProviderFactory {
       const maxIterations = input.maxIterations ?? 500
       let latestProgress: { fraction: number } | null = { fraction: 0 }
       let solveId: string | null = null
+      let iterationsRun = 0
+      let refining = false
+      let cancelRefine: (() => void) | null = null
+      let disposed = false
 
       const handle = client.solveStreet(
         {
@@ -37,15 +41,43 @@ export function createWorkerProviderFactory(): NodeProviderFactory {
           targetExploitability: input.targetExploitability,
           checkEveryIterations: input.checkEveryIterations,
         },
-        (iterationsRun) => {
-          latestProgress = { fraction: Math.min(1, iterationsRun / maxIterations) }
+        (nextIterationsRun) => {
+          iterationsRun = nextIterationsRun
+          latestProgress = { fraction: Math.min(1, nextIterationsRun / maxIterations) }
         },
       )
 
       const ready = handle.promise.then((summary) => {
         solveId = summary.solveId
-        latestProgress = null
+        iterationsRun = summary.iterationsRun
+        if (!refining) latestProgress = null
       })
+
+      function refine(opts: RefineOptions): void {
+        if (refining) return
+        refining = true
+        latestProgress = { fraction: opts.maxIterations === 0 ? 1 : Math.min(1, iterationsRun / opts.maxIterations) }
+
+        void (async () => {
+          try {
+            await ready
+            if (disposed) return
+            if (!solveId) throw new Error('refine: solve did not complete successfully (no solveId)')
+            latestProgress = { fraction: opts.maxIterations === 0 ? 1 : Math.min(1, iterationsRun / opts.maxIterations) }
+            const refineHandle = client.refineSession(solveId, opts, (nextIterationsRun) => {
+              iterationsRun = nextIterationsRun
+              latestProgress = { fraction: Math.min(1, nextIterationsRun / opts.maxIterations) }
+            })
+            cancelRefine = refineHandle.cancel
+            const result = await refineHandle.promise
+            iterationsRun = result.iterationsRun
+          } finally {
+            cancelRefine = null
+            refining = false
+            latestProgress = null
+          }
+        })().catch(() => undefined)
+      }
 
       return {
         street: input.street,
@@ -62,7 +94,10 @@ export function createWorkerProviderFactory(): NodeProviderFactory {
           return map
         },
         progress: () => latestProgress,
+        refine,
         dispose: () => {
+          disposed = true
+          cancelRefine?.()
           handle.cancel()
         },
       }
