@@ -140,14 +140,13 @@ interface PendingUserDecision {
 }
 
 /**
- * P7-6b: ターン(プレイ用の粗いソルブで通過した街)をハンド終了後に精密再ソルブ・
+ * P9-4: ターン(プレイ用ソルブから同一セッションを背景精密化した街)をハンド終了後に
  * 再収穫するための素材。transitionToNextStreet/finalizeFold/finalizeShowdownが
  * ターンの収穫(harvestStreet)を行う直前に退避する(harvestStreetはstreetActionLog等を
  * クリアしてしまうため)。decisionStartIdxはリファイン後の決断をthis.decisionsの
  * どこに差し戻すかを示す。
  */
 interface StreetRefineMaterial {
-  solveInput: StreetSolveInput
   actionLog: RecordedAction[]
   userDecisions: PendingUserDecision[]
   initialOopWeights: number[]
@@ -166,18 +165,18 @@ const NEAR_ZERO_BB = 1e-6
  * 判明した。そのためmaxIterationsを75→50に引き下げ、絶対的な最悪ケースを
  * ~11秒→~7.4秒へ短縮する(典型ケースはcheckEveryIterations=25の時点で既に
  * targetExploitability付近まで収束していることが多く、実質的な影響は小さい)。
- * 採点の精度はハンド終了後のバックグラウンド精密リファイン(REFINE_SOLVE、P7-6b)で
+ * 採点の精度はフロップ終了直後からのバックグラウンド精密リファイン(REFINE_SOLVE、P9-4)で
  * 別途補う(UX優先度②)。ボット行動の品質はここでは最下位優先度③として明示的に妥協する。
  */
 const TURN_PLAY_SOLVE = { maxIterations: 50, targetExploitability: 0.04, checkEveryIterations: 25 }
 /** リバーは木が小さくソルブが高速なため、プレイ時から精密な収束のままでよい。 */
 const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
 /**
- * P7-6b: ハンド終了後、Workerが暇になった時点でターンをバックグラウンド精密再ソルブする
- * ときの設定(UX優先度②「答え合わせをできるだけ正確に」)。従来の即時ソルブ版と同じ
+ * P9-4: ターンproviderの既存セッションをフロップ終了直後から背景精密化する設定
+ * (UX優先度②「答え合わせをできるだけ正確に」)。従来の即時ソルブ版と同じ
  * 収束目標(0.5%)にすることで、最終的な採点精度は変えない。
  */
-const REFINE_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
+const REFINE_SOLVE = { maxIterations: 300, targetExploitability: 0.005, chunkIterations: 50 }
 
 /** weight>0のコンボからdeadCardと衝突するものを除いて再正規化する(ターン/リバーへの遷移時に使う)。 */
 function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {
@@ -332,9 +331,9 @@ export class FullHandController {
   /** 現在のストリートで各プレイヤーが直近に取ったアクション(P7-2、場の表示専用)。街が変わるとクリアする。 */
   private latestActionBySeat: [LatestAction | null, LatestAction | null] = [null, null]
 
-  // P7-6b: ハンド終了後のバックグラウンド精密リファイン関連の状態
-  /** ターンのforLiveStreetに渡した実際のStreetSolveInput(リファイン時に同じ入力へREFINE_SOLVEを重ねて再ソルブする)。 */
-  private pendingTurnSolveInput: StreetSolveInput | null = null
+  // P9-4: フロップ終了直後からのバックグラウンド精密リファイン関連の状態
+  /** プレイ用ソルブ後も保持し、同一セッションを背景精密化するターンprovider。 */
+  private turnProvider: StreetNodeProvider | null = null
   /** ターンの街が終わった時点で退避したリファイン素材。無ければリファイン不要(ターンに到達しなかった等)。 */
   private refineMaterial: StreetRefineMaterial | null = null
   /** リファイン中かどうか(FullHandSnapshot.refiningとしてUIへ公開)。 */
@@ -345,6 +344,8 @@ export class FullHandController {
   private refineProgressTimer: ReturnType<typeof setInterval> | null = null
   /** リファイン用に一時的に開いているprovider(dispose()からのキャンセル対象)。 */
   private activeRefineProvider: StreetNodeProvider | null = null
+  /** 街遷移・リファイン完了・controller破棄をまたいだ同一providerの二重disposeを防ぐ。 */
+  private readonly disposedProviders = new Set<StreetNodeProvider>()
   /** dispose()済みなら以後のemit/onErrorを抑止する(二重dispose・破棄後のstore更新を防ぐ)。 */
   private disposed = false
 
@@ -562,15 +563,14 @@ export class FullHandController {
   }
 
   /**
-   * P7-6b: このストリートがターンで、かつプレイ用の粗いソルブ入力(pendingTurnSolveInput)が
-   * 記録済みなら、harvestStreetで消費される前にリファイン素材を退避する。ターン以外
+   * P9-4: このストリートがターンで、かつ背景精密化中のproviderが保持されているなら、
+   * harvestStreetで消費される前にリファイン素材を退避する。ターン以外
    * (フロップ=事前計算、リバー=プレイ時から精密)では何もしない。transitionToNextStreet/
    * finalizeFold/finalizeShowdownがharvestStreetを呼ぶ直前に必ず呼ぶこと。
    */
   private captureTurnRefineMaterialIfNeeded(): void {
-    if (this.street !== 'turn' || !this.pendingTurnSolveInput) return
+    if (this.street !== 'turn' || !this.turnProvider) return
     this.refineMaterial = {
-      solveInput: this.pendingTurnSolveInput,
       actionLog: [...this.streetActionLog],
       userDecisions: [...this.streetUserDecisions],
       initialOopWeights: [...this.streetInitialOopWeights],
@@ -580,39 +580,24 @@ export class FullHandController {
   }
 
   /**
-   * ハンド終了時に呼ぶ。ターンのリファイン素材が無ければ即座にfactoryを解放する
-   * (従来通り)。あればrefining=trueでemitしてからバックグラウンドでターンを
-   * REFINE_SOLVEで再ソルブ・再収穫し、this.decisions/this.resultを差し替えて
-   * refining=falseでemitする。失敗してもハンド結果自体は壊さない(粗い採点のまま)。
+   * ハンド終了時に呼ぶ。ターンproviderの背景精密化が完了済みなら即再収穫し、未完了なら
+   * progress()がnullへ戻るまでポーリングしてから再収穫する。失敗してもハンド結果自体は
+   * 壊さない(粗い採点のまま)。
    */
   private async finishOrRefine(): Promise<void> {
     const material = this.refineMaterial
     this.refineMaterial = null
-    if (!material) {
+    const turnProvider = this.turnProvider
+    this.turnProvider = null
+
+    if (!material || !turnProvider) {
       if (!this.disposed) this.deps.providerFactory.dispose()
       return
     }
 
-    this.refining = true
-    this.refineProgress = 0
-    this.emit()
-
-    try {
-      const refineProvider = this.deps.providerFactory.forLiveStreet({ ...material.solveInput, ...REFINE_SOLVE })
-      this.activeRefineProvider = refineProvider
-      // P8-3: リファイン中の進捗をUIへ伝えるため、~500msごとにprovider.progress()を
-      // ポーリングしてemitする(値が変化した時のみ、無駄な再描画を避ける)。
-      // provider.ready解決後はprogress()が常にnullを返す仕様なので、その時点で
-      // 自然にポーリングを止めてもよいが、finallyでの確実なclearIntervalに委ねる。
-      this.refineProgressTimer = setInterval(() => {
-        const fraction = this.activeRefineProvider?.progress()?.fraction ?? null
-        if (fraction !== this.refineProgress) {
-          this.refineProgress = fraction
-          this.emit()
-        }
-      }, 500)
+    const harvestAndApply = async (): Promise<void> => {
       const { decisions } = await computeStreetHarvest({
-        provider: refineProvider,
+        provider: turnProvider,
         actionLog: material.actionLog,
         userDecisions: material.userDecisions,
         initialOopWeights: material.initialOopWeights,
@@ -630,6 +615,52 @@ export class FullHandController {
           decisionSummaries: this.decisions.map((d) => ({ street: d.street, chosenLabel: d.chosenLabel, verdict: d.grading.verdict, evLossBb: d.grading.evLossBb })),
         }
       }
+    }
+
+    // dispose()が収穫中に呼ばれた場合、所有権をnull化して二重解放を防げるよう先に登録する。
+    this.activeRefineProvider = turnProvider
+
+    // in-process実装など、ハンド終了時点で既に精密化済みならポーリングせず即収穫する。
+    if (turnProvider.progress() === null) {
+      try {
+        await harvestAndApply()
+      } catch (err) {
+        if (!this.disposed) {
+          const error = err instanceof Error ? err : new Error(String(err))
+          this.deps.onError?.(error)
+        }
+      } finally {
+        const ownsProvider = this.activeRefineProvider === turnProvider
+        this.activeRefineProvider = null
+        if (ownsProvider) this.disposeProvider(turnProvider)
+        if (!this.disposed) this.deps.providerFactory.dispose()
+      }
+      return
+    }
+
+    this.refining = true
+    this.refineProgress = turnProvider.progress()?.fraction ?? null
+    this.emit()
+
+    try {
+      await new Promise<void>((resolve) => {
+        this.refineProgressTimer = setInterval(() => {
+          const fraction = this.activeRefineProvider?.progress()?.fraction ?? null
+          if (fraction !== this.refineProgress) {
+            this.refineProgress = fraction
+            if (!this.disposed) this.emit()
+          }
+          if (fraction === null) {
+            if (this.refineProgressTimer !== null) {
+              clearInterval(this.refineProgressTimer)
+              this.refineProgressTimer = null
+            }
+            resolve()
+          }
+        }, 500)
+      })
+      if (this.disposed) return
+      await harvestAndApply()
     } catch (err) {
       if (!this.disposed) {
         const error = err instanceof Error ? err : new Error(String(err))
@@ -640,8 +671,9 @@ export class FullHandController {
         clearInterval(this.refineProgressTimer)
         this.refineProgressTimer = null
       }
-      this.activeRefineProvider?.dispose()
+      const ownsProvider = this.activeRefineProvider === turnProvider
       this.activeRefineProvider = null
+      if (ownsProvider) this.disposeProvider(turnProvider)
       if (!this.disposed) {
         this.refining = false
         this.refineProgress = null
@@ -673,7 +705,7 @@ export class FullHandController {
     const filteredOop = filterAndRenormalize(this.provider.oopCombos, oopWeights, cardK)
     const filteredIp = filterAndRenormalize(this.provider.ipCombos, ipWeights, cardK)
 
-    this.provider.dispose()
+    if (this.turnProvider !== this.provider) this.disposeProvider(this.provider)
     this.street = nextStreet
     this.board = newBoard
     this.streetInitialOopWeights = filteredOop.weights
@@ -695,10 +727,13 @@ export class FullHandController {
       effectiveStackBb: this.remainingStackBb,
       ...playSolve,
     }
-    // P7-6b: ターンだけがこの入力をハンド終了後の精密リファインで再利用する
-    // (フロップは事前計算、リバーはプレイ時から精密なので不要)。
-    this.pendingTurnSolveInput = nextStreet === 'turn' ? solveInput : null
     this.provider = this.deps.providerFactory.forLiveStreet(solveInput)
+    if (nextStreet === 'turn') {
+      // P9-4: ターンproviderを保持し、プレイ用ソルブのreadyを待つ間から同一セッションの
+      // 背景精密化を予約する。refine()側が初期ソルブ完了後に継続する契約を持つ。
+      this.turnProvider = this.provider
+      this.provider.refine(REFINE_SOLVE)
+    }
 
     const tree =
       nextStreet === 'turn'
@@ -802,14 +837,20 @@ export class FullHandController {
     }
   }
 
+  private disposeProvider(provider: StreetNodeProvider): void {
+    if (this.disposedProviders.has(provider)) return
+    this.disposedProviders.add(provider)
+    provider.dispose()
+  }
+
   dispose(): void {
     this.disposed = true
-    this.provider.dispose()
-    // P7-6b: リファイン中の破棄。finishOrRefine側のfinallyが二重にdisposeしないよう、
-    // ここで参照をnull化してから呼ぶ(disposeが必ず1回だけ呼ばれるようにする)。
-    const refineProvider = this.activeRefineProvider
+    const providers = new Set<StreetNodeProvider>([this.provider])
+    if (this.turnProvider) providers.add(this.turnProvider)
+    if (this.activeRefineProvider) providers.add(this.activeRefineProvider)
+    this.turnProvider = null
     this.activeRefineProvider = null
-    refineProvider?.dispose()
+    for (const provider of providers) this.disposeProvider(provider)
     // P8-3: 進捗ポーリングのインターバルも即座に止める(finishOrRefine側のfinallyでも
     // clearするが、disposed後はそちらのemitが抑止されるだけでインターバル自体は
     // 残ってしまうため、ここで明示的に止める)。

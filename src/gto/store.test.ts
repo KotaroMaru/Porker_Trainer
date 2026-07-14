@@ -349,7 +349,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
 
     expect(useGtoStore.getState().status).toBe('handOver')
     expect(useGtoStore.getState().fullHand?.result).not.toBeNull()
-  }, 60_000) // P7-6bのバックグラウンドリファイン(ターン到達時に自動発火)がCPUを追加で使うため30sでは不足しうる
+  }, 120_000) // P9-4でターン到達時に同期的な背景リファイン(300反復)が実行されるため余裕を確保する
 
   it('openReviewFromResultでhandOver後にreview(複数決断もありうる)が構築され、statusがgradedになりtallyのhands/decisionsが増える', async () => {
     const beforeStart = useGtoStore.getState().fullHand
@@ -375,14 +375,13 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(state.reviewFeatures.length).toBe(state.review!.decisions.length)
     expect(state.sessionTally.hands).toBe(1)
     expect(state.sessionTally.decisions).toBe(state.review!.decisions.length)
-  }, 60_000) // P7-6bのバックグラウンドリファイン(ターン到達時に自動発火)がCPUを追加で使うため30sでは不足しうる
+  }, 120_000) // P9-4でターン到達時に同期的な背景リファイン(300反復)が実行されるため余裕を確保する
 
   it('P7-6b: レビュー閲覧中(status=graded)にターンのバックグラウンドリファインが完了しても、statusがhandOverへ引き戻されずreview/featuresだけが差し替わる', async () => {
     // in-processファクトリは同期的に解くため、通常はreviewを開く前にリファインまで
-    // 完了してしまい、レース自体を再現できない。3回目のforLiveStreet呼び出し
-    // (ターン+リバーのプレイ用ソルブに続く、ターンのリファイン呼び出し)だけ、
-    // readyの解決を手動でゲートして「レビュー画面を開いた後にリファインが完了する」
-    // 状況を確定的に再現する。
+    // 完了してしまい、レース自体を再現できない。ターンproviderのrefine()は実行して
+    // 最終値を作りつつ、外部公開progress()だけを手動でゲートし、「レビュー画面を
+    // 開いた後にリファインが完了する」状況を確定的に再現する。
     // ボットの行動は(store.tsがMath.randomを直接使うため)このテストからは
     // 決定論的に制御できない。ユーザー側はcheck優先・無ければcallを選び続けることで、
     // ターンへ到達する前にフォールド/オールインへ逸れる確率を実用上無視できる水準まで
@@ -426,6 +425,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     let callIdx = 0
     let gate = new Promise<void>(() => {})
     let releaseRefine: (() => void) | null = null
+    let refineWasCalled: boolean
     __setProviderFactoryForTests(() => {
       const inner = createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 })
       const wrapped: NodeProviderFactory = {
@@ -433,8 +433,22 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
         forLiveStreet: (input) => {
           callIdx++
           const real = inner.forLiveStreet(input) // in-processは呼び出し時点で既に同期的に解いている
-          if (callIdx <= 2) return real
-          const gated: StreetNodeProvider = { ...real, ready: gate.then(() => real.ready) }
+          if (callIdx !== 1) return real
+          let refining = false
+          const gated: StreetNodeProvider = {
+            ...real,
+            refine: (opts) => {
+              refineWasCalled = true
+              refining = true
+              // 同一セッションの精密化自体は実行しつつ、同期テストシームでは追加5反復に
+              // 制限してP9-4の状態遷移テストを実用的な時間に保つ。
+              real.refine({ ...opts, maxIterations: 20, targetExploitability: 0, chunkIterations: 5 })
+              void gate.then(() => {
+                refining = false
+              })
+            },
+            progress: () => (refining ? { fraction: 0.5 } : real.progress()),
+          }
           return gated
         },
         dispose: () => inner.dispose(),
@@ -445,6 +459,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     let reachedTurnRefine = false
     for (let attempt = 0; attempt < 8 && !reachedTurnRefine; attempt++) {
       callIdx = 0
+      refineWasCalled = false
       gate = new Promise<void>((resolve) => {
         releaseRefine = resolve
       })
@@ -463,7 +478,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
         await waitForFreshPause(snap)
       }
       expect(useGtoStore.getState().status).toBe('handOver')
-      reachedTurnRefine = callIdx === 3 // ターン+リバーのプレイ用+ターンのリファイン(ゲートされ未完了)
+      reachedTurnRefine = refineWasCalled // ターンproviderの背景refineが開始され、完了だけゲートされている
     }
     expect(reachedTurnRefine).toBe(true)
 
