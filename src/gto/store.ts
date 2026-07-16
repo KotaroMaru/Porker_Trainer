@@ -236,13 +236,21 @@ export const useGtoStore = create<GtoState>((set, get) => ({
     get().ensureFeatures(0)
   },
   closeBookmark: () => {
+    // 通しモードのライブレビューから保存済みを開いた場合、以前のハンドのコントローラが
+    // 残り得る。遅延したonUpdateがidleを上書きしないよう、一覧へ戻る時点で破棄する。
+    get().fullHandController?.dispose()
     set({
+      // ブックマークを開くとstatusは'graded'になる。ここでidleへ戻さないと、
+      // PlayScreenがReviewScreenを選ぶ一方reviewはnullとなり空白画面になる。
+      status: 'idle',
       review: null,
       reviewSource: 'live',
       reviewFeatures: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
       activeTab: 'bookmarks',
+      fullHand: null,
+      fullHandController: null,
     })
   },
 

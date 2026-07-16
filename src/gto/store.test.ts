@@ -19,11 +19,29 @@ import {
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
 import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeDataProvider'
-import type { FullHandSnapshot } from './trainer/fullHandFlow'
+import type { FullHandController, FullHandSnapshot } from './trainer/fullHandFlow'
 import { SCENARIOS } from './data/scenarios'
 import { FLOPS } from './data/flops'
 
 const originalFetch = globalThis.fetch
+
+function createMemoryStorage(): Storage {
+  const values = new Map<string, string>()
+  return {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value)
+    },
+    removeItem: (key: string) => {
+      values.delete(key)
+    },
+    clear: () => values.clear(),
+    key: (index: number) => [...values.keys()][index] ?? null,
+    get length() {
+      return values.size
+    },
+  } as Storage
+}
 
 const binFetchStub = (async (input: RequestInfo | URL) => {
   const url = typeof input === 'string' ? input : input.toString()
@@ -105,6 +123,34 @@ describe('useGtoStore', () => {
     expect(state.status).toBe('userTurn')
     expect(state.grading).toBeNull()
     expect(state.spot).not.toBeNull()
+  })
+
+  it('単発モードで保存済みブックマークを閉じた後、新しいスポットを開始できる', async () => {
+    const originalLocalStorage = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+    try {
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+      await useGtoStore.getState().startNewSpot()
+      const spot = useGtoStore.getState().spot
+      if (!spot) throw new Error('spot should be set')
+      useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+      const saved = useGtoStore.getState().saveCurrentReview()
+      if (!saved?.ok) throw new Error('bookmark should be saved')
+
+      useGtoStore.getState().openBookmark(saved.id)
+      expect(useGtoStore.getState().status).toBe('graded')
+      expect(useGtoStore.getState().review).not.toBeNull()
+
+      useGtoStore.getState().closeBookmark()
+      expect(useGtoStore.getState().status).toBe('idle')
+      expect(useGtoStore.getState().review).toBeNull()
+
+      await useGtoStore.getState().startNewSpot()
+      expect(useGtoStore.getState().status).toBe('userTurn')
+      expect(useGtoStore.getState().spot).not.toBeNull()
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+    }
   })
 
   it('複数スポットを連続で解いてもtallyが正しく累積する', async () => {
@@ -350,6 +396,47 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(useGtoStore.getState().status).toBe('handOver')
     expect(useGtoStore.getState().fullHand?.result).not.toBeNull()
   }, 120_000) // P9-4でターン到達時に同期的な背景リファイン(300反復)が実行されるため余裕を確保する
+
+  it('通しモードで保存済みブックマークを閉じた後、新しいハンドを開始できる', async () => {
+    const originalLocalStorage = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+    try {
+      // ブックマークはreviewを直接復元するため、保存時のモードと再開時のモードは独立している。
+      // 単発レビューを最小のフィクスチャとして保存し、通しモードでの再開状態を検証する。
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+      await useGtoStore.getState().startNewSpot()
+      const spot = useGtoStore.getState().spot
+      if (!spot) throw new Error('spot should be set')
+      useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+      const saved = useGtoStore.getState().saveCurrentReview()
+      if (!saved?.ok) throw new Error('bookmark should be saved')
+
+      let disposeCount = 0
+      const previousController = {
+        dispose: () => {
+          disposeCount++
+        },
+      } as unknown as FullHandController
+      // ライブ通しレビューを経由して保存済みを開いた場合を模擬する。closeBookmarkは
+      // このコントローラを残すと遅延onUpdateでidleを上書きし得るため破棄しなければならない。
+      useGtoStore.setState({ fullHandController: previousController })
+      useGtoStore.getState().openBookmark(saved.id)
+      useGtoStore.getState().closeBookmark()
+      expect(useGtoStore.getState().status).toBe('idle')
+      expect(disposeCount).toBe(1)
+      expect(useGtoStore.getState().fullHandController).toBeNull()
+
+      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [] } })
+      const beforeStart = useGtoStore.getState().fullHand
+      await useGtoStore.getState().startNewSpot()
+      await waitForStorePause(beforeStart)
+      expect(useGtoStore.getState().status).toBe('userTurn')
+      expect(useGtoStore.getState().fullHand).not.toBeNull()
+      expect(useGtoStore.getState().fullHandController).not.toBeNull()
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+    }
+  }, 30_000)
 
   it('openReviewFromResultでhandOver後にreview(複数決断もありうる)が構築され、statusがgradedになりtallyのhands/decisionsが増える', async () => {
     const beforeStart = useGtoStore.getState().fullHand
