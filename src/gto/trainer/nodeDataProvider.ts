@@ -20,6 +20,7 @@ export interface RefineOptions {
   targetExploitability: number
   maxIterations: number
   chunkIterations: number
+  measureEveryIterations?: number
 }
 
 export interface StreetNodeProvider {

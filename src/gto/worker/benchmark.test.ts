@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { solveCfr } from '../solver/cfr'
+import { createCfrSession, solveCfr } from '../solver/cfr'
 import { scoreComboOnBoard } from '../solver/handEval'
 import { buildTurnSubgameTree, collectDecisions } from '../tree/actionTree'
 import { getRange } from '../data/ranges'
@@ -77,6 +77,28 @@ function buildRealisticSubgame(): { game: CfrGame<Combo>; decisionCount: number;
 }
 
 describe('P2性能ベンチマーク: 実際のレンジ規模でのターン部分ゲーム解', () => {
+  it(
+    '背景リファイン候補の8反復チャンクとexploitability測定を個別計測する',
+    () => {
+      const { game } = buildRealisticSubgame()
+      const session = createCfrSession(game)
+
+      session.advance(50)
+      const advanceStart = performance.now()
+      session.advance(8)
+      const advanceMs = performance.now() - advanceStart
+
+      const measureStart = performance.now()
+      const exploitability = session.measureExploitability()
+      const measureMs = performance.now() - measureStart
+
+      console.log(`背景リファイン実測: advance(8)=${advanceMs.toFixed(0)}ms, measure=${measureMs.toFixed(0)}ms`)
+      expect(session.iterationsRun).toBe(58)
+      expect(Number.isFinite(exploitability)).toBe(true)
+    },
+    120_000,
+  )
+
   it(
     '本番想定パラメータ(上限500反復・目標expl 0.5% pot)で収束時間を計測する',
     () => {

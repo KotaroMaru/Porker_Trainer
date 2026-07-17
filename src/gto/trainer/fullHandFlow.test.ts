@@ -386,7 +386,12 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
           ...real,
           refine: (opts) => {
             refineCalls++
-            expect(opts).toEqual({ maxIterations: 300, targetExploitability: 0.005, chunkIterations: 50 })
+            expect(opts).toEqual({
+              maxIterations: 300,
+              targetExploitability: 0.005,
+              chunkIterations: 8,
+              measureEveryIterations: 48,
+            })
             real.refine(opts)
           },
         }

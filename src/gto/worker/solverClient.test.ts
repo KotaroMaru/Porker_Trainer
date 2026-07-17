@@ -36,7 +36,7 @@ describe('SolverClient.refineSession', () => {
     const onProgress = vi.fn()
     const handle = client.refineSession(
       'solve42',
-      { targetExploitability: 0.001, maxIterations: 500, chunkIterations: 25 },
+      { targetExploitability: 0.001, maxIterations: 500, chunkIterations: 25, measureEveryIterations: 48 },
       onProgress,
     )
     const worker = MockWorker.latest
@@ -47,6 +47,7 @@ describe('SolverClient.refineSession', () => {
       targetExploitability: 0.001,
       maxIterations: 500,
       chunkIterations: 25,
+      measureEveryIterations: 48,
     })
     const requestId = request.requestId
 

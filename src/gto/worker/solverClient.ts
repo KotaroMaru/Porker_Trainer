@@ -125,7 +125,10 @@ export class SolverClient {
 
   refineSession(
     solveId: string,
-    opts: Pick<RefineSessionRequest, 'targetExploitability' | 'maxIterations' | 'chunkIterations'>,
+    opts: Pick<
+      RefineSessionRequest,
+      'targetExploitability' | 'maxIterations' | 'chunkIterations' | 'measureEveryIterations'
+    >,
     onProgress?: (iterationsRun: number, exploitability: number) => void,
   ): RefineHandle {
     const requestId = nextRequestId()

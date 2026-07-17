@@ -176,7 +176,12 @@ const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, chec
  * (UX優先度②「答え合わせをできるだけ正確に」)。従来の即時ソルブ版と同じ
  * 収束目標(0.5%)にすることで、最終的な採点精度は変えない。
  */
-const REFINE_SOLVE = { maxIterations: 300, targetExploitability: 0.005, chunkIterations: 50 }
+const REFINE_SOLVE = {
+  maxIterations: 300,
+  targetExploitability: 0.005,
+  chunkIterations: 8,
+  measureEveryIterations: 48,
+}
 
 /** weight>0のコンボからdeadCardと衝突するものを除いて再正規化する(ターン/リバーへの遷移時に使う)。 */
 function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {

@@ -143,6 +143,66 @@ describe('solverWorker P9-2 session registry', () => {
     expect(done.exploitability).toBeLessThan(initialExploitability)
   })
 
+  it('大きなリファイン中も別solveIdのgetNodesへ有界時間内に応答する', async () => {
+    send(solveRequest('refine-base'))
+    const refineBase = posted.find((message) => message.kind === 'result' && message.requestId === 'refine-base')
+    if (refineBase?.kind !== 'result') throw new Error('refine base solve failed')
+
+    send(solveRequest('nodes-base'))
+    const nodesBase = posted.find((message) => message.kind === 'result' && message.requestId === 'nodes-base')
+    if (nodesBase?.kind !== 'result') throw new Error('nodes base solve failed')
+
+    send({
+      kind: 'refineSession',
+      requestId: 'long-refine',
+      solveId: refineBase.solution.solveId,
+      targetExploitability: -1,
+      maxIterations: 300,
+      chunkIterations: 8,
+      measureEveryIterations: 48,
+    })
+    setTimeout(() => {
+      send({
+        kind: 'getNodes',
+        requestId: 'other-solve-nodes',
+        solveId: nodesBase.solution.solveId,
+        nodeIds: [''],
+      })
+    }, 0)
+
+    const nodes = await waitForMessage(
+      (message) => message.kind === 'nodes' && message.requestId === 'other-solve-nodes',
+    )
+    const done = await waitForMessage((message) => message.kind === 'refineDone' && message.requestId === 'long-refine')
+    expect(posted.indexOf(nodes)).toBeLessThan(posted.indexOf(done))
+  })
+
+  it('refineProgressは毎チャンクの正確な反復数と測定間引き中のexploitabilityを通知する', async () => {
+    send(solveRequest('progress-base'))
+    const result = posted.find((message) => message.kind === 'result' && message.requestId === 'progress-base')
+    if (result?.kind !== 'result') throw new Error('progress base solve failed')
+
+    send({
+      kind: 'refineSession',
+      requestId: 'sparse-measurement',
+      solveId: result.solution.solveId,
+      targetExploitability: -1,
+      maxIterations: 30,
+      chunkIterations: 5,
+      measureEveryIterations: 20,
+    })
+    await waitForMessage((message) => message.kind === 'refineDone' && message.requestId === 'sparse-measurement')
+
+    const progress = posted.filter(
+      (message): message is Extract<WorkerResponse, { kind: 'refineProgress' }> =>
+        message.kind === 'refineProgress' && message.requestId === 'sparse-measurement',
+    )
+    expect(progress.map((message) => message.iterationsRun)).toEqual([15, 20, 25, 30])
+    expect(progress[1].exploitability).toBe(progress[0].exploitability)
+    expect(progress[2].exploitability).toBe(progress[0].exploitability)
+    expect(progress[3].exploitability).not.toBe(progress[0].exploitability)
+  })
+
   it('requestId単位のcancelで進行中refineを止め、完了後にprogressを追加しない', async () => {
     send(solveRequest('solve-cancel-base'))
     const result = posted.find((message) => message.kind === 'result' && message.requestId === 'solve-cancel-base')

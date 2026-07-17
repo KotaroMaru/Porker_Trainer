@@ -148,18 +148,28 @@ async function handleRefineSession(req: Extract<WorkerRequest, { kind: 'refineSe
     if (!Number.isInteger(req.maxIterations) || req.maxIterations < 0) {
       throw new Error('refineSession: maxIterations must be a non-negative integer')
     }
+    const measureEveryIterations = req.measureEveryIterations ?? 48
+    if (!Number.isInteger(measureEveryIterations) || measureEveryIterations <= 0) {
+      throw new Error('refineSession: measureEveryIterations must be a positive integer')
+    }
     const stored = solveRegistry.get(solveId)
     if (!stored) throw new Error(`refineSession: no session matches solveId "${solveId}"`)
 
     const { session } = stored
     let exploitability = session.measureExploitability()
+    let iterationsSinceMeasurement = 0
     while (
       session.iterationsRun < req.maxIterations &&
       exploitability >= req.targetExploitability &&
       !cancelledRequests.has(requestId)
     ) {
+      const iterationsBeforeAdvance = session.iterationsRun
       session.advance(Math.min(req.chunkIterations, req.maxIterations - session.iterationsRun))
-      exploitability = session.measureExploitability()
+      iterationsSinceMeasurement += session.iterationsRun - iterationsBeforeAdvance
+      if (iterationsSinceMeasurement >= measureEveryIterations) {
+        exploitability = session.measureExploitability()
+        iterationsSinceMeasurement = 0
+      }
       const progress: WorkerResponse = {
         kind: 'refineProgress',
         requestId,

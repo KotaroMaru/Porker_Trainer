@@ -53,6 +53,8 @@ export interface RefineSessionRequest {
   /** solveStreetで実行済みの反復を含む総反復数の上限。 */
   maxIterations: number
   chunkIterations: number
+  /** リファイン中にexploitabilityを再測定する反復間隔。既定48。 */
+  measureEveryIterations?: number
 }
 
 export type WorkerRequest = SolveStreetRequest | RefineSessionRequest | GetNodesRequest | { kind: 'cancel'; requestId: string }
