@@ -144,19 +144,27 @@ function buildReasonParagraph(decision: ReviewDecision, features: SpotFeatures):
       return '強い手ですが、ここでベットしても相手のコール/継続レンジから十分な価値を引き出しにくいため、チェックで相手にブラフさせる/展開を作る方が得です。'
     }
     if (features.handClass === 'AIR' || features.handClass === 'STRONG_DRAW' || features.handClass === 'WEAK_DRAW') {
-      return `ベットしても相手のフォールド率が低くエクイティも十分でないため、無理に攻めずチェックでポットを小さく保ちます(${features.nutsAdvantage.verdictJa})。`
+      return `無理に攻めずチェックでポットを小さく保ち、次のストリートでエクイティを活かす方針です(${features.nutsAdvantage.verdictJa})。`
     }
     return 'ミドル程度の強さで、ベットして良い手にレイズされるリスクを避けつつ、エクイティを守るチェックが優位です(ポットコントロール)。'
   }
 
   if (category === 'call') {
     const req = features.potOddsRequiredEq
-    return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(features.heroComboEquity * 100)}あり、コールが+EVです。` + (features.mdf !== null ? `このサイズに対する最低ディフェンス頻度は${pctVal(features.mdf * 100)}です。` : '')
+    const equity = features.heroComboEquity
+    if (equity >= (req ?? 0)) {
+      return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(equity * 100)}あり、コールが+EVです。` + (features.mdf !== null ? `このサイズに対する最低ディフェンス頻度は${pctVal(features.mdf * 100)}です。` : '')
+    }
+    return `実際のエクイティは${pctVal(equity * 100)}で単純なポットオッズ上の必要勝率${pctVal((req ?? 0) * 100)}には届きませんが、GTOではレンジ全体の防御を考慮してコールを選びます。` + (features.mdf !== null ? `このサイズに対する最低ディフェンス頻度は${pctVal(features.mdf * 100)}です。` : '')
   }
 
   // fold
   const req = features.potOddsRequiredEq
-  return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(features.heroComboEquity * 100)}しかなく、ブロッカーも十分でないためフォールドが最善です。`
+  const equity = features.heroComboEquity
+  if (equity < (req ?? 0)) {
+    return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(equity * 100)}しかなく、ブロッカーも十分でないためフォールドが最善です。`
+  }
+  return `実際のエクイティ${pctVal(equity * 100)}はポットオッズ上の必要勝率${pctVal((req ?? 0) * 100)}を満たしていますが、単純なポットオッズだけでは判断できません。相手の継続レンジの強さや今後のストリートでの不利を総合すると、フォールドが優れています。`
 }
 
 function buildComparisonParagraph(decision: ReviewDecision, features: SpotFeatures): string | null {
@@ -169,7 +177,9 @@ function buildComparisonParagraph(decision: ReviewDecision, features: SpotFeatur
 
   if (chosenResponse && bestResponse && !chosenResponse.terminal && !bestResponse.terminal) {
     if (chosenResponse.heroEquityVsContinueRange !== null && bestResponse.heroEquityVsContinueRange !== null) {
-      line += `相手の継続レンジに対するエクイティも${actionJa(grading.bestLabel)}の方が${pctVal(bestResponse.heroEquityVsContinueRange * 100)}(${actionJa(decision.chosenLabel)}は${pctVal(chosenResponse.heroEquityVsContinueRange * 100)})と優れています。`
+      if (bestResponse.heroEquityVsContinueRange > chosenResponse.heroEquityVsContinueRange) {
+        line += `相手の継続レンジに対するエクイティも${actionJa(grading.bestLabel)}の方が${pctVal(bestResponse.heroEquityVsContinueRange * 100)}(${actionJa(decision.chosenLabel)}は${pctVal(chosenResponse.heroEquityVsContinueRange * 100)})と優れています。`
+      }
     }
   }
   return line

@@ -165,6 +165,52 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
     expect(explanation.paragraphs.join('')).toContain('必要勝率')
   })
 
+  it('fold: エクイティが必要勝率を下回る場合だけ、不足を理由にする', () => {
+    const decision = buildSyntheticDecision('facingBet', 'correct')
+    decision.grading.bestLabel = 'fold'
+    decision.chosenLabel = 'fold'
+    const features = buildSyntheticFeatures('facingBet', 'AIR')
+    features.heroComboEquity = 0.2
+    features.potOddsRequiredEq = 0.33
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('しかなく')
+    expect(reason).toContain('フォールドが最善')
+  })
+
+  it('fold: エクイティが必要勝率を満たす場合は、不足を理由にしない', () => {
+    const decision = buildSyntheticDecision('facingBet', 'correct')
+    decision.grading.bestLabel = 'fold'
+    decision.chosenLabel = 'fold'
+    const features = buildSyntheticFeatures('facingBet', 'AIR')
+    features.heroComboEquity = 0.35
+    features.potOddsRequiredEq = 0.2
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('必要勝率20%を満たしています')
+    expect(reason).not.toContain('しかなく')
+    expect(reason).not.toContain('届きません')
+  })
+
+  it('call: エクイティが必要勝率を下回る場合は、ポットオッズだけで+EVと断定しない', () => {
+    const decision = buildSyntheticDecision('facingBet', 'correct')
+    const features = buildSyntheticFeatures('facingBet', 'MIDDLE')
+    features.heroComboEquity = 0.2
+    features.potOddsRequiredEq = 0.33
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('必要勝率33%には届きません')
+    expect(reason).not.toContain('コールが+EV')
+  })
+
+  it('比較段落: 継続レンジに対するエクイティが低いアクションを優位と断定しない', () => {
+    const decision = buildSyntheticDecision('root', 'incorrect')
+    const features = buildSyntheticFeatures('root', 'MIDDLE')
+
+    const comparison = buildExplanation(decision, features).paragraphs[2]
+    expect(comparison).not.toContain('エクイティもベット33%の方が')
+  })
+
   it('correct時は比較段落(不正解時の追加段落)が生成されない', () => {
     const decision = buildSyntheticDecision('root', 'correct')
     const features = buildSyntheticFeatures('root', 'MONSTER')
