@@ -165,16 +165,20 @@ describe('useGtoStore', () => {
     expect(state.sessionTally.totalEvLossBb).toBeGreaterThanOrEqual(0)
   })
 
-  it('デイリーチャレンジは10問を集計して同日再開始を防止する', async () => {
+  it('デイリーチャレンジ(単発)は10問を集計し、各問のあとレビューを挟んでから同日再開始を防止する', async () => {
     const originalLocalStorage = globalThis.localStorage
     Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
     try {
       useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: SCENARIOS.map((scenario) => scenario.id) }, availability: null })
-      await useGtoStore.getState().startDailyChallenge()
+      await useGtoStore.getState().startDailyChallenge('single')
       for (let i = 0; i < 10; i++) {
         const spot = useGtoStore.getState().spot
         if (!spot) throw new Error(`daily spot ${i} should be loaded`)
         useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+        // P11 Phase C: 自動で次の問題へ進まず、必ず'reviewing'を経由してreviewが構築される。
+        expect(useGtoStore.getState().dailyChallenge?.phase).toBe('reviewing')
+        expect(useGtoStore.getState().review).not.toBeNull()
+        useGtoStore.getState().dismissDailyReview()
         if (i < 9) {
           const started = Date.now()
           while (useGtoStore.getState().status === 'loading') {
@@ -188,7 +192,7 @@ describe('useGtoStore', () => {
       expect(completed?.results).toHaveLength(10)
       expect(Object.values(loadDailyResults())).toHaveLength(1)
       const rating = useGtoStore.getState().dailyRank
-      await useGtoStore.getState().startDailyChallenge()
+      await useGtoStore.getState().startDailyChallenge('single')
       expect(useGtoStore.getState().dailyChallenge?.phase).toBe('done')
       expect(useGtoStore.getState().dailyRank).toBe(rating)
     } finally {
@@ -208,7 +212,7 @@ describe('useGtoStore', () => {
       useGtoStore.setState({
         settings: { mode: 'full', enabledScenarioIds: [] },
         fullHandController: mockController,
-        dailyChallenge: { dateKey: '2026-01-01', handIndex: 10, totalHands: 10, results: [], phase: 'done', ratingBefore: 1000, ratingAfter: 1005 },
+        dailyChallenge: { dateKey: '2026-01-01', handIndex: 10, totalHands: 10, results: [], phase: 'done', ratingBefore: 1000, ratingAfter: 1005, mode: 'single' },
       })
       useGtoStore.getState().chooseAction('bet33')
       expect(chosenLabel).toBe('bet33')

@@ -1,11 +1,19 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import { DAILY_HAND_COUNT, computeDailyScore, dailyDateKey } from '../../gto/dailyChallenge/dailyChallenge'
 import { loadDailyResults } from '../../gto/dailyChallenge/storage'
 import { useGtoStore } from '../../gto/store'
+import type { GtoMode } from '../../gto/settings'
+import { isOopPosition } from '../../gto/data/scenarios'
 import { boardFromFlop } from '../../gto/trainer/gameFlow'
-import { CardView } from '../CardView'
-import { actionColor } from './actionColors'
-import { actionLabelJa, rankLabel, suitSymbol } from './labels'
+import { PokerTableView } from './PokerTableView'
+import { ActionButtonRow } from './ActionButtonRow'
+import { ReviewScreen } from './ReviewScreen'
+import { actionLabelJa } from './labels'
+
+// P11 Phase C: デイリーチャレンジを単発/通し両モードに対応させ、1問(単発)/1ハンド(通し)
+// ごとにレビュー画面を挟むよう拡張した(store.ts側でphase:'idle'|'playing'|'reviewing'|'done'
+// の4段階に拡張済み)。プレイ中の盤面はPhase A/Bで整備済みの共有部品(PokerTableView/
+// ActionButtonRow)を使い、単発の自前簡易盤面(旧実装)は廃止した。
 
 function RecentScores() {
   const results = useMemo(() => loadDailyResults(), [])
@@ -27,34 +35,121 @@ function RecentScores() {
   )
 }
 
+/** 場(フェルト)に表示する「アクション名+金額」のチップ用ラベル(PlayScreen.tsxのFullHandPlayScreenと同じ規約)。 */
+function actionChipLabel(a: { label: string; amountBb: number } | undefined): string | null {
+  if (!a) return null
+  return actionLabelJa(a.label) + (a.amountBb > 0 ? ` ${a.amountBb.toFixed(1)}bb` : '')
+}
+
+function ModePicker({ value, onChange }: { value: GtoMode; onChange: (mode: GtoMode) => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 8 }}>
+      {(['single', 'full'] as const).map((m) => (
+        <button
+          key={m}
+          onClick={() => onChange(m)}
+          style={{
+            padding: '8px 16px',
+            borderRadius: 6,
+            border: '1px solid var(--panel-border)',
+            background: value === m ? 'var(--green-mid)' : 'transparent',
+            color: value === m ? 'var(--gold-light)' : 'var(--text-dim)',
+            fontWeight: value === m ? 700 : 400,
+          }}
+        >
+          {m === 'single' ? '単発モード' : '通しモード'}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 export function DailyChallengeScreen() {
-  const { dailyChallenge, dailyRank, startDailyChallenge, chooseAction, spot, status, errorMessage } = useGtoStore()
+  const { dailyChallenge, dailyRank, startDailyChallenge, chooseAction, dismissDailyReview, spot, fullHand, status, errorMessage } = useGtoStore()
+  const [selectedMode, setSelectedMode] = useState<GtoMode>('single')
   const today = dailyDateKey()
   const summary = dailyChallenge?.results.length ? computeDailyScore(dailyChallenge.results) : null
 
   if (dailyChallenge?.phase === 'playing' && status === 'error') {
     return <div style={{ padding: 24, textAlign: 'center' }}><p style={{ color: 'var(--red)' }}>問題の読み込みに失敗しました。</p><p style={{ color: 'var(--text-dim)' }}>{errorMessage}</p></div>
   }
-  if (dailyChallenge?.phase === 'playing' && (!spot || status === 'loading')) {
-    return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>次の問題を読み込み中...</div>
-  }
-  if (dailyChallenge?.phase === 'playing' && spot) {
+
+  // 単発モード: プレイ中
+  if (dailyChallenge?.phase === 'playing' && dailyChallenge.mode === 'single') {
+    if (!spot || status === 'loading') {
+      return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>次の問題を読み込み中...</div>
+    }
+    const oopIsRaiser = isOopPosition(spot.scenario.raiser.position, spot.scenario.defender.position)
+    const oopPosition = oopIsRaiser ? spot.scenario.raiser.position : spot.scenario.defender.position
+    const ipPosition = oopIsRaiser ? spot.scenario.defender.position : spot.scenario.raiser.position
+    const userPosition = spot.userSeat === 0 ? oopPosition : ipPosition
+    const botPosition = spot.userSeat === 0 ? ipPosition : oopPosition
     const board = boardFromFlop(spot.flop)
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex + 1}/{dailyChallenge.totalHands}問目</div>
-        <div style={{ background: 'var(--green-felt)', borderRadius: 10, padding: 18, textAlign: 'center' }}>
-          <div style={{ color: 'var(--gold-light)', marginBottom: 10 }}>ポット {spot.scenario.potBb}bb</div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 6, marginBottom: 14 }}>{board.map((card, i) => <CardView key={i} card={card} size="md" />)}</div>
-          <div style={{ display: 'flex', justifyContent: 'center', gap: 6, alignItems: 'center' }}><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>あなた</span><CardView card={spot.userCombo[0]} size="sm" /><CardView card={spot.userCombo[1]} size="sm" /></div>
-        </div>
-        <div style={{ color: 'var(--text-dim)', fontSize: 13 }}>ボード: {board.map((card) => `${rankLabel(card.rank)}${suitSymbol(card.suit)}`).join(' ')}</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {spot.actionsWithAmounts.map((action) => <button key={action.label} onClick={() => chooseAction(action.label)} style={{ flex: '1 1 100px', padding: '12px 8px', background: actionColor(action.label), color: '#fff', borderRadius: 8, border: '1px solid rgba(0,0,0,.25)', fontWeight: 600 }}>{actionLabelJa(action.label)}</button>)}
-        </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex + 1}/{dailyChallenge.totalHands}問目 ・ 単発モード</div>
+        <PokerTableView
+          board={board}
+          heroCombo={spot.userCombo}
+          heroPosition={userPosition}
+          potBb={spot.scenario.potBb}
+          villain={{
+            position: botPosition,
+            latestActionText: spot.botActionsBefore.length > 0 ? actionLabelJa(spot.botActionsBefore[spot.botActionsBefore.length - 1].label) : null,
+          }}
+        />
+        <ActionButtonRow actions={spot.actionsWithAmounts} onChoose={chooseAction} />
       </div>
     )
   }
+
+  // 通しモード: プレイ中
+  if (dailyChallenge?.phase === 'playing' && dailyChallenge.mode === 'full') {
+    if (!fullHand || status === 'loading') {
+      return <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>次のハンドを読み込み中...</div>
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex + 1}/{dailyChallenge.totalHands}問目 ・ 通しモード</div>
+        <PokerTableView
+          board={fullHand.board}
+          heroCombo={fullHand.userCombo}
+          heroPosition={fullHand.userPosition}
+          potBb={fullHand.potBb}
+          villain={{
+            position: fullHand.botPosition,
+            latestActionText: actionChipLabel(fullHand.latestActions.find((a) => !a.isUser)),
+          }}
+          heroLatestActionText={actionChipLabel(fullHand.latestActions.find((a) => a.isUser))}
+        />
+        {status === 'botThinking' ? (
+          <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-dim)' }}>
+            相手が考え中…{fullHand.solveProgress !== null && ` (解析 ${Math.round(fullHand.solveProgress * 100)}%)`}
+          </div>
+        ) : (
+          <ActionButtonRow actions={fullHand.actionsWithAmounts} onChoose={chooseAction} />
+        )}
+      </div>
+    )
+  }
+
+  // 単発・通し共通: 1問/1ハンドごとのレビュー画面
+  if (dailyChallenge?.phase === 'reviewing') {
+    const isLast = dailyChallenge.handIndex >= dailyChallenge.totalHands
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex}/{dailyChallenge.totalHands}問目 完了</div>
+        <ReviewScreen />
+        <button
+          onClick={() => dismissDailyReview()}
+          style={{ alignSelf: 'center', padding: '10px 22px', background: 'var(--green-mid)', color: 'var(--gold-light)', border: '1px solid var(--green-light)', borderRadius: 6, fontWeight: 600 }}
+        >
+          {isLast ? '結果を見る' : '次のハンドへ'}
+        </button>
+      </div>
+    )
+  }
+
   if (dailyChallenge?.phase === 'done') {
     const stored = loadDailyResults()[dailyChallenge.dateKey]
     const result = summary ? { ...summary, handCount: dailyChallenge.totalHands } : (stored ?? null)
@@ -71,12 +166,14 @@ export function DailyChallengeScreen() {
       </div>
     )
   }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, maxWidth: 620 }}>
       <h3 style={{ color: 'var(--gold)', margin: 0 }}>本日のチャレンジ（{DAILY_HAND_COUNT}問）</h3>
       <p style={{ color: 'var(--text-dim)', margin: 0 }}>毎日固定の10問で、正解率とEVロスからスコアを計算します。同じ日は一度だけ挑戦できます。</p>
       <div style={{ fontSize: 18 }}>現在のランク: <span style={{ color: 'var(--gold-light)', fontWeight: 700 }}>{dailyRank}</span></div>
-      <button onClick={() => void startDailyChallenge()} style={{ alignSelf: 'start', padding: '10px 22px', background: 'var(--green-mid)', color: 'var(--gold-light)', border: '1px solid var(--green-light)', borderRadius: 6 }}>今日のチャレンジを開始</button>
+      <ModePicker value={selectedMode} onChange={setSelectedMode} />
+      <button onClick={() => void startDailyChallenge(selectedMode)} style={{ alignSelf: 'start', padding: '10px 22px', background: 'var(--green-mid)', color: 'var(--gold-light)', border: '1px solid var(--green-light)', borderRadius: 6 }}>今日のチャレンジを開始</button>
       <RecentScores />
       <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>日付: {today}</div>
     </div>

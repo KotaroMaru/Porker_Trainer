@@ -37,7 +37,7 @@ import type { Scenario, FlopDef } from './types'
 import type { Card } from '../engine/types'
 import type { Combo } from '../analysis/range'
 import { computeCustomHandReview, type CustomHandInput, type CustomStreetAction } from './trainer/customHandReview'
-import { DAILY_HAND_COUNT, applyDailyResultToRank, computeDailyScore, dailyDateKey, pickDailySpotSeeds, type DailyAnswer } from './dailyChallenge/dailyChallenge'
+import { DAILY_HAND_COUNT, aggregateDailyAnswer, applyDailyResultToRank, computeDailyScore, dailyDateKey, pickDailySpotSeeds, type DailyAnswer } from './dailyChallenge/dailyChallenge'
 import { loadDailyRank, loadDailyResults, saveDailyRank, saveDailyResult } from './dailyChallenge/storage'
 
 /** availability未ロード・生成済みシナリオが1つも無い場合の最終フォールバック。 */
@@ -119,9 +119,13 @@ export interface DailyChallengeState {
   handIndex: number
   totalHands: number
   results: DailyAnswer[]
-  phase: 'idle' | 'playing' | 'done'
+  /** P11 Phase C: 'reviewing'を追加。1問(単発)/1ハンド(通し)答えるたびに'reviewing'を
+   *  経由してからdismissDailyReview()で次へ進む(または最終問なら'done')。 */
+  phase: 'idle' | 'playing' | 'reviewing' | 'done'
   ratingBefore: number
   ratingAfter: number | null
+  /** P11 Phase C: このチャレンジの単発/通しモード(startDailyChallengeの引数で確定、以後不変)。 */
+  mode: GtoMode
 }
 
 export function initialTally(): SessionTally {
@@ -165,9 +169,12 @@ export interface GtoState {
 
   dailyChallenge: DailyChallengeState | null
   dailyRank: number
-  startDailyChallenge: () => Promise<void>
-  /** デイリー用に次の固定問題をロードする。UIはstartDailyChallenge/chooseAction経由でのみ使う。 */
+  startDailyChallenge: (mode: GtoMode) => Promise<void>
+  /** デイリー用に次の固定問題をロードする。UIはstartDailyChallenge/dismissDailyReview経由でのみ使う。 */
   advanceDailyChallenge: () => Promise<void>
+  /** P11 Phase C: デイリーの'reviewing'フェーズから抜ける唯一の入口。次のハンド/問題へ
+   *  進める(phase:'playing'で再びadvanceDailyChallenge)、または最終問なら'done'にする。 */
+  dismissDailyReview: () => void
 
   /** シナリオID→生成済みフロップID配列。未ロードの間はnull(GTOタブ初回マウントでloadAvailability()を呼ぶ想定)。 */
   availability: Map<string, string[]> | null
@@ -231,31 +238,35 @@ export const useGtoStore = create<GtoState>((set, get) => ({
 
   dailyChallenge: null,
   dailyRank: loadDailyRank(),
-  startDailyChallenge: async () => {
+  startDailyChallenge: async (mode: GtoMode) => {
     const dateKey = dailyDateKey()
     const existing = loadDailyResults()[dateKey]
     const current = get().dailyChallenge
     if (existing) {
       const rating = get().dailyRank
+      // 完了済み表示にmodeは使われないため、引数のmodeをそのまま入れておけば十分。
       set({
-        dailyChallenge: { dateKey, handIndex: existing.handCount, totalHands: existing.handCount, results: [], phase: 'done', ratingBefore: rating, ratingAfter: rating },
+        dailyChallenge: { dateKey, handIndex: existing.handCount, totalHands: existing.handCount, results: [], phase: 'done', ratingBefore: rating, ratingAfter: rating, mode },
       })
       return
     }
     if (current?.phase === 'playing' && current.dateKey === dateKey) return
     const rating = get().dailyRank
-    set({ dailyChallenge: { dateKey, handIndex: 0, totalHands: DAILY_HAND_COUNT, results: [], phase: 'playing', ratingBefore: rating, ratingAfter: null } })
+    set({ dailyChallenge: { dateKey, handIndex: 0, totalHands: DAILY_HAND_COUNT, results: [], phase: 'playing', ratingBefore: rating, ratingAfter: null, mode } })
     await get().advanceDailyChallenge()
   },
   advanceDailyChallenge: async () => {
     const challenge = get().dailyChallenge
-    if (!challenge || challenge.phase !== 'playing') return
+    // P11 Phase C: startDailyChallenge直後('playing')に加え、dismissDailyReview経由
+    // ('reviewing'→次の問題/ハンドへ進める場合)からも呼ばれる。
+    if (!challenge || (challenge.phase !== 'playing' && challenge.phase !== 'reviewing')) return
     const seeds = pickDailySpotSeeds(challenge.dateKey, challenge.totalHands)[challenge.handIndex]
     if (!seeds) return
     get().fullHandController?.dispose()
     set({
       status: 'loading', spot: null, grading: null, chosenLabel: null, errorMessage: null,
       fullHand: null, fullHandController: null, review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0,
+      dailyChallenge: { ...challenge, phase: 'playing' },
     })
     try {
       await get().loadAvailability()
@@ -266,12 +277,98 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       const flop = pickWeightedFlop(selectFlopPool(FLOPS, availability?.get(scenario.id)), seeds.flopRng)
       const flopSolution = await loadFlopSolution(scenario.id, flop.cards.join(''))
       const userSeat: Seat = seeds.seatRng() < 0.5 ? 0 : 1
+      // 非同期ロード中に別の日/問題へ切り替わっていた場合、古い問題を表示しない
+      // (single/full共通で使う、controller構築直前・spot確定直後どちらでも呼べる純関数)。
+      const stale = () => get().dailyChallenge?.dateKey !== challenge.dateKey || get().dailyChallenge?.handIndex !== challenge.handIndex
+
+      if (challenge.mode === 'full') {
+        if (stale()) return
+        // onUpdateクロージャは自分自身(controller)を後から参照するが、実際に呼ばれるのは
+        // コンストラクタ完了後(start()経由の非同期継続以降)なので、const代入でTDZ問題は
+        // 起きない(prefer-const)。
+        const controller: FullHandController = new FullHandController({
+          scenario,
+          flop,
+          flopSolution,
+          userSeat,
+          rng: seeds.handRng, // 決定性のため(startNewSpotのMath.randomとは異なる)
+          providerFactory: providerFactoryCreator(),
+          onUpdate: (snap) => {
+            const state = get()
+            // 使い捨てられた(disposeされ差し替わった)コントローラからの遅延emitを無視する。
+            if (state.fullHandController !== controller) return
+            if (state.status === 'graded') {
+              // 初回のhandOver処理(下のsnap.phase==='over'分岐)は完了済み(レビュー画面
+              // 表示中)。ここに来るのはターンのバックグラウンドリファイン完了などの
+              // フォローアップemit(phase='over'のまま)のみなので、スコア集計・
+              // handIndex加算は再実行せず、reviewを最新のリファイン結果へ差し替えるだけに
+              // とどめる(デイリー通しモードはレビュー閲覧中に別レビューを覗き見る導線が
+              // 無いため、startNewSpot側ほど厳密な差分保持は不要、単純化してよい仕様)。
+              if (state.reviewSource === 'live' && state.review) {
+                const newReview = controller.getReview()
+                set({ fullHand: snap, review: newReview, reviewFeatures: new Array(newReview.decisions.length).fill(null), reviewFeaturesStatus: 'idle' })
+                get().ensureFeatures(get().activeDecisionIdx)
+              } else {
+                set({ fullHand: snap })
+              }
+              return
+            }
+            if (snap.phase === 'over') {
+              const dc = get().dailyChallenge
+              if (!dc) {
+                set({ fullHand: snap })
+                return
+              }
+              const review = controller.getReview()
+              const answer = aggregateDailyAnswer(review.decisions)
+              const results = [...dc.results, answer]
+              const handIndex = dc.handIndex + 1
+              const isLast = handIndex >= dc.totalHands
+              let ratingAfter = dc.ratingAfter
+              const patch: Partial<GtoState> = {
+                status: 'graded',
+                fullHand: snap,
+                review,
+                reviewSource: 'live',
+                reviewFeatures: new Array(review.decisions.length).fill(null),
+                reviewFeaturesStatus: 'idle',
+                activeDecisionIdx: 0,
+              }
+              if (isLast) {
+                const summary = computeDailyScore(results)
+                ratingAfter = applyDailyResultToRank(dc.ratingBefore, summary.score)
+                saveDailyResult(dc.dateKey, { score: summary.score, correctCount: summary.correctCount, totalEvLossBb: summary.totalEvLossBb, handCount: dc.totalHands })
+                saveDailyRank(ratingAfter)
+                patch.dailyRank = ratingAfter
+              }
+              patch.dailyChallenge = { ...dc, handIndex, results, phase: 'reviewing', ratingAfter }
+              set(patch)
+              get().ensureFeatures(0)
+              return
+            }
+            set({ fullHand: snap, status: snap.phase === 'userTurn' ? 'userTurn' : 'botThinking' })
+          },
+          onError: (err) => set({ status: 'error', errorMessage: err.message }),
+        })
+        set({ fullHandController: controller })
+        controller.start()
+        return
+      }
+
       const spot = createSpot(scenario, flop, flopSolution, userSeat, seeds.seatRng)
-      // 非同期ロード中に別の日へ切り替わっていた場合、古い問題を表示しない。
-      if (get().dailyChallenge?.dateKey !== challenge.dateKey || get().dailyChallenge?.handIndex !== challenge.handIndex) return
+      if (stale()) return
       set({ status: 'userTurn', spot, grading: null, chosenLabel: null, errorMessage: null })
     } catch (e) {
       set({ status: 'error', errorMessage: e instanceof Error ? e.message : String(e) })
+    }
+  },
+  dismissDailyReview: () => {
+    const challenge = get().dailyChallenge
+    if (!challenge || challenge.phase !== 'reviewing') return
+    if (challenge.handIndex >= challenge.totalHands) {
+      set({ dailyChallenge: { ...challenge, phase: 'done' } })
+    } else {
+      void get().advanceDailyChallenge()
     }
   },
 
@@ -529,12 +626,21 @@ export const useGtoStore = create<GtoState>((set, get) => ({
 
   chooseAction: (label: string) => {
     const { settings, fullHandController, spot, sessionTally, dailyChallenge } = get()
+    // P11 Phase C: デイリー通しモード中は、単発用のapplyUserAction経路ではなく
+    // fullHandController(FullHandController)へ委譲する。採点・スコア集計・phase遷移は
+    // advanceDailyChallenge内のonUpdateがsnap.phase==='over'到達時にまとめて行う。
+    if (dailyChallenge?.phase === 'playing' && dailyChallenge.mode === 'full') {
+      fullHandController?.chooseAction(label)
+      return
+    }
+    // (デイリー非playing、または通常プレイの通しモード): 既存どおりfullHandControllerへ委譲。
     if (dailyChallenge?.phase !== 'playing' && settings.mode === 'full') {
       fullHandController?.chooseAction(label)
       return
     }
     if (!spot) return
     const grading = applyUserAction(spot, label)
+    const review = buildReview(spot, grading, label)
     const nextTally: SessionTally = {
       ...sessionTally,
       spots: sessionTally.spots + 1,
@@ -543,11 +649,27 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       totalEvLossBb: sessionTally.totalEvLossBb + Math.max(0, grading.evLossBb),
     }
     if (dailyChallenge?.phase === 'playing') {
+      // ここに来るのはdailyChallenge.mode==='single'のみ(fullは上のガードで既に処理済み)。
+      // P11 Phase C: 最後の問題かどうかに関わらず、毎回reviewを構築してphase:'reviewing'へ
+      // 遷移する(自動で次の問題へ進まない。dismissDailyReview()が唯一の先進アクション)。
       const results = [...dailyChallenge.results, { verdict: grading.verdict, evLossBb: grading.evLossBb }]
       const handIndex = dailyChallenge.handIndex + 1
-      if (handIndex >= dailyChallenge.totalHands) {
+      const isLast = handIndex >= dailyChallenge.totalHands
+      let ratingAfter = dailyChallenge.ratingAfter
+      const patch: Partial<GtoState> = {
+        status: 'graded',
+        grading,
+        chosenLabel: label,
+        sessionTally: nextTally,
+        review,
+        reviewSource: 'live',
+        reviewFeatures: new Array(review.decisions.length).fill(null),
+        reviewFeaturesStatus: 'idle',
+        activeDecisionIdx: 0,
+      }
+      if (isLast) {
         const summary = computeDailyScore(results)
-        const ratingAfter = applyDailyResultToRank(dailyChallenge.ratingBefore, summary.score)
+        ratingAfter = applyDailyResultToRank(dailyChallenge.ratingBefore, summary.score)
         saveDailyResult(dailyChallenge.dateKey, {
           score: summary.score,
           correctCount: summary.correctCount,
@@ -555,21 +677,14 @@ export const useGtoStore = create<GtoState>((set, get) => ({
           handCount: dailyChallenge.totalHands,
         })
         saveDailyRank(ratingAfter)
-        set({
-          status: 'graded', grading, chosenLabel: label, sessionTally: nextTally,
-          dailyRank: ratingAfter,
-          dailyChallenge: { ...dailyChallenge, handIndex, results, phase: 'done', ratingAfter },
-        })
-      } else {
-        set({
-          status: 'loading', grading, chosenLabel: label, sessionTally: nextTally,
-          dailyChallenge: { ...dailyChallenge, handIndex, results },
-        })
-        void get().advanceDailyChallenge()
+        patch.dailyRank = ratingAfter
       }
+      // phaseは'reviewing'のまま('done'にするのはdismissDailyReview()が呼ばれた時点)。
+      patch.dailyChallenge = { ...dailyChallenge, handIndex, results, phase: 'reviewing', ratingAfter }
+      set(patch)
+      get().ensureFeatures(0)
       return
     }
-    const review = buildReview(spot, grading, label)
     set({
       status: 'graded',
       grading,
