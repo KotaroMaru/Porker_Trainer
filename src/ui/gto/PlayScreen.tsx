@@ -4,30 +4,16 @@ import { boardFromFlop } from '../../gto/trainer/gameFlow'
 import { buildPreflopScript } from '../../gto/trainer/preflopScript'
 import { isOopPosition } from '../../gto/data/scenarios'
 import type { Street, HistoryEntry } from '../../gto/trainer/reviewBuilder'
-import { CardView } from '../CardView'
 import { ReviewScreen } from './ReviewScreen'
 import { ResultSummaryScreen } from './ResultSummaryScreen'
 import { actionLabelJa, rankLabel, suitSymbol, STREET_LABEL_JA } from './labels'
-import { actionColor } from './actionColors'
+import { PokerTableView } from './PokerTableView'
+import { ActionButtonRow } from './ActionButtonRow'
 
 // P4 Step D / P5 Step B9: プレイ画面。settings.modeで単発/通しの2実装に分岐する
 // (P6 Step B8で通し=FullHandPlayScreenを追加。単発=SingleSpotPlayScreenは無変更)。
-
-// P7-1: アクションボタンをレビュー画面と同じ配色(actionColors.ts)で塗り分ける
-// (check=緑/call=フェルト緑/fold=青/bet系=赤濃淡)。全ての実装済み背景色に対し
-// 白文字が十分なコントラストを持つことをindex.cssの値で確認済み。
-function actionButtonStyle(label: string): React.CSSProperties {
-  return {
-    flex: '1 1 100px',
-    padding: '12px 8px',
-    fontSize: 14,
-    fontWeight: 600,
-    background: actionColor(label),
-    color: '#fff',
-    border: '1px solid rgba(0,0,0,0.25)',
-    borderRadius: 8,
-  }
-}
+// P11 Phase A: フェルトテーブル描画・アクションボタン列を共有部品(PokerTableView/
+// ActionButtonRow)へ切り出した(挙動不変)。
 
 export function PlayScreen() {
   const mode = useGtoStore((s) => s.settings.mode)
@@ -127,51 +113,20 @@ function SingleSpotPlayScreen() {
       </div>
 
       {/* テーブル */}
-      <div
-        style={{
-          background: 'var(--green-felt)',
-          borderRadius: 12,
-          padding: 20,
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: 16,
+      <PokerTableView
+        board={board}
+        heroCombo={spot.userCombo}
+        heroPosition={userPosition}
+        potBb={spot.scenario.potBb}
+        villain={{
+          position: botPosition,
+          latestActionText:
+            spot.botActionsBefore.length > 0 ? actionLabelJa(spot.botActionsBefore[spot.botActionsBefore.length - 1].label) : null,
         }}
-      >
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <CardView faceDown size="sm" />
-          <CardView faceDown size="sm" />
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 6 }}>{botPosition}</span>
-          {spot.botActionsBefore.length > 0 && <ActionChip text={actionLabelJa(spot.botActionsBefore[spot.botActionsBefore.length - 1].label)} />}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-          <div style={{ color: 'var(--gold-light)', fontSize: 14 }}>ポット {spot.scenario.potBb}bb</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {board.map((c, i) => (
-              <div key={i} style={{ border: '2px solid var(--gold)', borderRadius: 6 }}>
-                <CardView card={c} size="md" />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 6 }}>
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, alignSelf: 'center', marginRight: 6 }}>{userPosition}(あなた)</span>
-          <CardView card={spot.userCombo[0]} size="sm" />
-          <CardView card={spot.userCombo[1]} size="sm" />
-        </div>
-      </div>
+      />
 
       {/* アクションボタン */}
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        {spot.actionsWithAmounts.map((a) => (
-          <button key={a.label} onClick={() => chooseAction(a.label)} style={actionButtonStyle(a.label)}>
-            {actionLabelJa(a.label)}
-            {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
-          </button>
-        ))}
-      </div>
+      <ActionButtonRow actions={spot.actionsWithAmounts} onChoose={chooseAction} />
 
       {/* セッション状態 */}
       <div style={{ fontSize: 12, color: 'var(--text-dim)', textAlign: 'center' }}>
@@ -190,25 +145,6 @@ function SingleSpotPlayScreen() {
 function actionChipLabel(a: { label: string; amountBb: number } | undefined): string | null {
   if (!a) return null
   return actionLabelJa(a.label) + (a.amountBb > 0 ? ` ${a.amountBb.toFixed(1)}bb` : '')
-}
-
-function ActionChip({ text }: { text: string }) {
-  return (
-    <span
-      data-testid="action-chip"
-      style={{
-        fontSize: 11,
-        fontWeight: 600,
-        color: 'var(--gold-light)',
-        background: 'rgba(0,0,0,0.35)',
-        padding: '2px 8px',
-        borderRadius: 10,
-        marginLeft: 6,
-      }}
-    >
-      {text}
-    </span>
-  )
 }
 
 function FullHandFooter({ sessionTally }: { sessionTally: SessionTally }) {
@@ -303,38 +239,17 @@ function FullHandPlayScreen() {
       </div>
 
       {/* テーブル */}
-      <div style={{ background: 'var(--green-felt)', borderRadius: 12, padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <CardView faceDown size="sm" />
-          <CardView faceDown size="sm" />
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginLeft: 6 }}>{fullHand.botPosition}</span>
-          {(() => {
-            const text = actionChipLabel(fullHand.latestActions.find((a) => !a.isUser))
-            return text && <ActionChip text={text} />
-          })()}
-        </div>
-
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-          <div style={{ color: 'var(--gold-light)', fontSize: 14 }}>ポット {fullHand.potBb.toFixed(1)}bb</div>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {fullHand.board.map((c, i) => (
-              <div key={i} style={{ border: '2px solid var(--gold)', borderRadius: 6 }}>
-                <CardView card={c} size="md" />
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <span style={{ color: 'var(--text-muted)', fontSize: 12, marginRight: 6 }}>{fullHand.userPosition}(あなた)</span>
-          <CardView card={fullHand.userCombo[0]} size="sm" />
-          <CardView card={fullHand.userCombo[1]} size="sm" />
-          {(() => {
-            const text = actionChipLabel(fullHand.latestActions.find((a) => a.isUser))
-            return text && <ActionChip text={text} />
-          })()}
-        </div>
-      </div>
+      <PokerTableView
+        board={fullHand.board}
+        heroCombo={fullHand.userCombo}
+        heroPosition={fullHand.userPosition}
+        potBb={fullHand.potBb}
+        villain={{
+          position: fullHand.botPosition,
+          latestActionText: actionChipLabel(fullHand.latestActions.find((a) => !a.isUser)),
+        }}
+        heroLatestActionText={actionChipLabel(fullHand.latestActions.find((a) => a.isUser))}
+      />
 
       {/* アクションボタン、またはボット思考中の進捗表示。userTurn中はソルブ進行中でも
           ボタンは常に有効(木構造だけで決まるため、次街のライブソルブ完了を待つ必要がない)。 */}
@@ -343,14 +258,7 @@ function FullHandPlayScreen() {
           相手が考え中…{fullHand.solveProgress !== null && ` (解析 ${Math.round(fullHand.solveProgress * 100)}%)`}
         </div>
       ) : (
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {fullHand.actionsWithAmounts.map((a) => (
-            <button key={a.label} onClick={() => chooseAction(a.label)} style={actionButtonStyle(a.label)}>
-              {actionLabelJa(a.label)}
-              {a.amountBb > 0 && <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.75)', fontWeight: 400 }}>{a.amountBb.toFixed(1)}bb</div>}
-            </button>
-          ))}
-        </div>
+        <ActionButtonRow actions={fullHand.actionsWithAmounts} onChoose={chooseAction} />
       )}
 
       <FullHandFooter sessionTally={sessionTally} />
