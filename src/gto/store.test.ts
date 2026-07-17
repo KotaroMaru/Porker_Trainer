@@ -4,7 +4,7 @@
 // フェッチ→デコード→スポット生成→採点の一連の流れを実データで検証する。
 // process.cwd()基準のパス解決を使う(grading.test.tsで判明したimport.meta.url問題を回避)。
 
-import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import {
@@ -22,6 +22,10 @@ import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeData
 import type { FullHandController, FullHandSnapshot } from './trainer/fullHandFlow'
 import { SCENARIOS } from './data/scenarios'
 import { FLOPS } from './data/flops'
+import { computeCustomHandReview } from './trainer/customHandReview'
+import type { ReviewData } from './trainer/reviewBuilder'
+
+vi.mock('./trainer/customHandReview', () => ({ computeCustomHandReview: vi.fn() }))
 
 const originalFetch = globalThis.fetch
 
@@ -92,6 +96,56 @@ describe('useGtoStore', () => {
     expect(state.status).toBe('userTurn')
     expect(state.spot).not.toBeNull()
     expect(state.errorMessage).toBeNull()
+  })
+
+  it('カスタム解析を開始・終了するとレビュー状態を汚さずフォーム状態へ戻る', async () => {
+    useGtoStore.setState({ availability: new Map() })
+    await useGtoStore.getState().startCustomAnalysis()
+    expect(useGtoStore.getState().activeTab).toBe('review')
+    expect(useGtoStore.getState().customAnalyzer?.phase).toBe('input')
+
+    useGtoStore.getState().closeCustomAnalysis()
+    expect(useGtoStore.getState().review).toBeNull()
+    expect(useGtoStore.getState().reviewSource).toBe('live')
+    expect(useGtoStore.getState().customAnalyzer?.phase).toBe('input')
+  })
+
+  it('必須入力がないカスタム解析はソルブを開始しない', async () => {
+    useGtoStore.setState({ availability: new Map() })
+    await useGtoStore.getState().startCustomAnalysis()
+    await useGtoStore.getState().submitCustomHand()
+    expect(useGtoStore.getState().customAnalyzer?.phase).toBe('input')
+    expect(useGtoStore.getState().review).toBeNull()
+  })
+
+  it('カスタム解析の成功時はcustom由来のReviewDataを表示用状態へ配線する', async () => {
+    const review = { decisions: [] } as unknown as ReviewData
+    vi.mocked(computeCustomHandReview).mockResolvedValueOnce(review)
+    __setProviderFactoryForTests(() => createInProcessProviderFactory({ maxIterations: 1, targetExploitability: 1 }))
+    useGtoStore.setState({ availability: new Map() })
+    await useGtoStore.getState().startCustomAnalysis()
+    useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0] })
+    useGtoStore.getState().updateCustomAnalysis({ flop: FLOPS[0], userSeat: 0, userCombo: [{ rank: 2, suit: 'c' }, { rank: 3, suit: 'd' }] })
+
+    await useGtoStore.getState().submitCustomHand()
+    expect(computeCustomHandReview).toHaveBeenCalledOnce()
+    expect(useGtoStore.getState().review).toBe(review)
+    expect(useGtoStore.getState().reviewSource).toBe('custom')
+    __resetProviderFactoryForTests()
+  })
+
+  it('カスタム解析の失敗はフォーム用エラーとして保持する', async () => {
+    vi.mocked(computeCustomHandReview).mockRejectedValueOnce(new Error('solver unavailable'))
+    __setProviderFactoryForTests(() => createInProcessProviderFactory({ maxIterations: 1, targetExploitability: 1 }))
+    useGtoStore.setState({ availability: new Map() })
+    await useGtoStore.getState().startCustomAnalysis()
+    useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0] })
+    useGtoStore.getState().updateCustomAnalysis({ flop: FLOPS[0], userSeat: 0, userCombo: [{ rank: 2, suit: 'c' }, { rank: 3, suit: 'd' }] })
+
+    await useGtoStore.getState().submitCustomHand()
+    expect(useGtoStore.getState().customAnalyzer?.phase).toBe('error')
+    expect(useGtoStore.getState().customAnalyzer?.error).toBe('solver unavailable')
+    __resetProviderFactoryForTests()
   })
 
   it('chooseActionでstatusがgradedになりgradingとtallyが更新される', async () => {

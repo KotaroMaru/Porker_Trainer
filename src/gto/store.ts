@@ -34,6 +34,9 @@ import { loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from
 import { saveBookmark, loadBookmark, type SaveBookmarkResult } from './bookmarks/storage'
 import type { GradeResult } from './trainer/grading'
 import type { Scenario, FlopDef } from './types'
+import type { Card } from '../engine/types'
+import type { Combo } from '../analysis/range'
+import { computeCustomHandReview, type CustomHandInput, type CustomStreetAction } from './trainer/customHandReview'
 
 /** availability未ロード・生成済みシナリオが1つも無い場合の最終フォールバック。 */
 const FALLBACK_SCENARIO_ID = 'srp_btn_vs_bb'
@@ -63,7 +66,38 @@ export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
  *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。 */
 export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings'
 /** 表示中のreviewの由来。'bookmark'ならReviewScreenの「次のハンド」を「一覧へ戻る」に差し替える。 */
-export type ReviewSource = 'live' | 'bookmark'
+export type ReviewSource = 'live' | 'bookmark' | 'custom'
+
+export interface CustomAnalyzerState {
+  scenario: Scenario | null
+  flop: FlopDef | null
+  userSeat: Seat | null
+  /** ピッカー途中はnullを含み得る。submit時だけ完全なComboへ絞り込む。 */
+  userCombo: [Card | null, Card | null] | null
+  turnCard: Card | null
+  riverCard: Card | null
+  streetActions: { flop: CustomStreetAction[]; turn: CustomStreetAction[]; river: CustomStreetAction[] }
+  phase: 'input' | 'solving' | 'error'
+  error: string | null
+}
+
+function initialCustomAnalyzer(): CustomAnalyzerState {
+  return { scenario: null, flop: null, userSeat: null, userCombo: null, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] }, phase: 'input', error: null }
+}
+
+/**
+ * computeCustomHandReviewの内部エラー(comboIndex.tsのlookupComboIndex等)は英語+生の
+ * rank/suit形式で投げられる。選択した手札がそのシナリオ・ポジションの想定レンジに
+ * 含まれない場合(例: 3betポットで4betレンジ側に分類されているハンド)に発生しうる、
+ * ユーザーにとって現実的な入力ミスなので、日本語の分かりやすいメッセージへ変換する。
+ */
+function describeCustomHandError(e: unknown): string {
+  const message = e instanceof Error ? e.message : String(e)
+  if (message.includes('combo not found in solution combo table')) {
+    return '選択した手札は、このマッチアップ・ポジションの想定レンジに含まれていません(例: 3betポットで本来4ベットされる手など)。別の手札を選ぶか、ポジションを変更してください。'
+  }
+  return message
+}
 
 export interface SessionTally {
   spots: number
@@ -144,6 +178,13 @@ export interface GtoState {
   openBookmark: (id: string) => void
   /** ブックマーク表示を終了し、保存済み一覧タブへ戻る。 */
   closeBookmark: () => void
+
+  customAnalyzer: CustomAnalyzerState | null
+  startCustomAnalysis: () => Promise<void>
+  updateCustomAnalysis: (update: Partial<Omit<CustomAnalyzerState, 'streetActions' | 'phase' | 'error'>>) => void
+  addCustomAction: (street: 'flop' | 'turn' | 'river', action: CustomStreetAction) => void
+  submitCustomHand: () => Promise<void>
+  closeCustomAnalysis: () => void
 
   /**
    * reviewFeatures[idx]が未計算なら計算をキックする(表示中の決断のみオンデマンド計算、
@@ -252,6 +293,60 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       fullHand: null,
       fullHandController: null,
     })
+  },
+
+  customAnalyzer: null,
+  startCustomAnalysis: async () => {
+    set({ activeTab: 'review', review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: initialCustomAnalyzer() })
+    try {
+      await get().loadAvailability()
+    } catch (e) {
+      set((state) => ({ customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'error', error: e instanceof Error ? e.message : String(e) } : state.customAnalyzer }))
+    }
+  },
+  updateCustomAnalysis: (update) => {
+    set((state) => {
+      if (!state.customAnalyzer) return {}
+      const changingScenario = update.scenario !== undefined && update.scenario !== state.customAnalyzer.scenario
+      return {
+        customAnalyzer: {
+          ...state.customAnalyzer,
+          ...update,
+          // シナリオ/フロップ変更後に古いアクション列や後続カードを残さない。
+          ...(changingScenario || update.flop !== undefined
+            ? { flop: changingScenario ? null : update.flop ?? state.customAnalyzer.flop, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] } }
+            : {}),
+          phase: 'input',
+          error: null,
+        },
+      }
+    })
+  },
+  addCustomAction: (street, action) => {
+    set((state) => {
+      if (!state.customAnalyzer || state.customAnalyzer.phase !== 'input') return {}
+      const actions = state.customAnalyzer.streetActions
+      return { customAnalyzer: { ...state.customAnalyzer, streetActions: { ...actions, [street]: [...actions[street], action] }, error: null } }
+    })
+  },
+  submitCustomHand: async () => {
+    const analyzer = get().customAnalyzer
+    if (!analyzer || !analyzer.scenario || !analyzer.flop || analyzer.userSeat === null || !analyzer.userCombo || !analyzer.userCombo[0] || !analyzer.userCombo[1]) return
+    const input: CustomHandInput = {
+      scenario: analyzer.scenario, flop: analyzer.flop, userSeat: analyzer.userSeat, userCombo: analyzer.userCombo as Combo,
+      turnCard: analyzer.turnCard, riverCard: analyzer.riverCard, streetActions: analyzer.streetActions,
+    }
+    set({ customAnalyzer: { ...analyzer, phase: 'solving', error: null } })
+    try {
+      const review = await computeCustomHandReview(input, providerFactoryCreator())
+      set({ status: 'graded', review, reviewSource: 'custom', reviewFeatures: new Array(review.decisions.length).fill(null), reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: { ...input, phase: 'input', error: null } })
+      get().ensureFeatures(0)
+    } catch (e) {
+      set((state) => ({ customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'error', error: describeCustomHandError(e) } : state.customAnalyzer }))
+    }
+  },
+  closeCustomAnalysis: () => {
+    set((state) => ({ status: 'idle', review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'input', error: null } : initialCustomAnalyzer(), activeTab: 'review' }))
   },
 
   ensureFeatures: (idx: number) => {

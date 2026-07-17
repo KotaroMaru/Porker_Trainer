@@ -2,6 +2,7 @@ import { useGtoStore, type GtoTab } from '../../gto/store'
 import { PlayScreen } from './PlayScreen'
 import { SettingsScreen } from './SettingsScreen'
 import { BookmarksScreen } from './BookmarksScreen'
+import { AnalyzerScreen } from './AnalyzerScreen'
 
 // P4 Step D: サブ画面切替(QuizViewパターン)。
 // P4は'play'のみ実装。P6 Step B9でsettingsを実装、B10でbookmarksを実装。
@@ -10,7 +11,7 @@ import { BookmarksScreen } from './BookmarksScreen'
 
 const MODE_LABELS: Record<GtoTab, string> = {
   play: 'プレイ',
-  review: 'レビュー',
+  review: 'カスタム解析',
   bookmarks: '保存済み',
   settings: '設定',
 }
@@ -46,11 +47,7 @@ export function GtoTrainerView() {
       {activeTab === 'play' && <PlayScreen />}
       {activeTab === 'settings' && <SettingsScreen />}
       {activeTab === 'bookmarks' && <BookmarksScreen />}
-      {activeTab === 'review' && (
-        <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)' }}>
-          {MODE_LABELS[activeTab]}はまだ実装されていません(今後のフェーズで追加予定)。
-        </div>
-      )}
+      {activeTab === 'review' && <AnalyzerScreen />}
     </div>
   )
 }
