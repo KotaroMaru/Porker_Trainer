@@ -22,6 +22,7 @@ import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeData
 import type { FullHandController, FullHandSnapshot } from './trainer/fullHandFlow'
 import { SCENARIOS } from './data/scenarios'
 import { FLOPS } from './data/flops'
+import { loadDailyResults } from './dailyChallenge/storage'
 import { computeCustomHandReview } from './trainer/customHandReview'
 import type { ReviewData } from './trainer/reviewBuilder'
 
@@ -162,6 +163,58 @@ describe('useGtoStore', () => {
     expect(['correct', 'marginal', 'incorrect']).toContain(state.grading?.verdict)
     expect(state.sessionTally.spots).toBe(1)
     expect(state.sessionTally.totalEvLossBb).toBeGreaterThanOrEqual(0)
+  })
+
+  it('デイリーチャレンジは10問を集計して同日再開始を防止する', async () => {
+    const originalLocalStorage = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+    try {
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: SCENARIOS.map((scenario) => scenario.id) }, availability: null })
+      await useGtoStore.getState().startDailyChallenge()
+      for (let i = 0; i < 10; i++) {
+        const spot = useGtoStore.getState().spot
+        if (!spot) throw new Error(`daily spot ${i} should be loaded`)
+        useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+        if (i < 9) {
+          const started = Date.now()
+          while (useGtoStore.getState().status === 'loading') {
+            if (Date.now() - started > 5000) throw new Error('next daily spot timed out')
+            await new Promise((resolve) => setTimeout(resolve, 10))
+          }
+        }
+      }
+      const completed = useGtoStore.getState().dailyChallenge
+      expect(completed?.phase).toBe('done')
+      expect(completed?.results).toHaveLength(10)
+      expect(Object.values(loadDailyResults())).toHaveLength(1)
+      const rating = useGtoStore.getState().dailyRank
+      await useGtoStore.getState().startDailyChallenge()
+      expect(useGtoStore.getState().dailyChallenge?.phase).toBe('done')
+      expect(useGtoStore.getState().dailyRank).toBe(rating)
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+    }
+  })
+
+  it('完了済みdailyChallengeが残っていても、通しモードのchooseActionはfullHandControllerへ届く(dailyChallengeの真偽値だけで分岐しない)', () => {
+    let chosenLabel: string | null = null
+    const mockController = {
+      chooseAction: (label: string) => {
+        chosenLabel = label
+      },
+      dispose: () => {},
+    } as unknown as FullHandController
+    try {
+      useGtoStore.setState({
+        settings: { mode: 'full', enabledScenarioIds: [] },
+        fullHandController: mockController,
+        dailyChallenge: { dateKey: '2026-01-01', handIndex: 10, totalHands: 10, results: [], phase: 'done', ratingBefore: 1000, ratingAfter: 1005 },
+      })
+      useGtoStore.getState().chooseAction('bet33')
+      expect(chosenLabel).toBe('bet33')
+    } finally {
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] }, fullHandController: null, dailyChallenge: null })
+    }
   })
 
   it('nextSpotで新しいスポットに切り替わりgradingがリセットされる', async () => {

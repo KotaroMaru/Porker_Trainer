@@ -37,6 +37,8 @@ import type { Scenario, FlopDef } from './types'
 import type { Card } from '../engine/types'
 import type { Combo } from '../analysis/range'
 import { computeCustomHandReview, type CustomHandInput, type CustomStreetAction } from './trainer/customHandReview'
+import { DAILY_HAND_COUNT, applyDailyResultToRank, computeDailyScore, dailyDateKey, pickDailySpotSeeds, type DailyAnswer } from './dailyChallenge/dailyChallenge'
+import { loadDailyRank, loadDailyResults, saveDailyRank, saveDailyResult } from './dailyChallenge/storage'
 
 /** availability未ロード・生成済みシナリオが1つも無い場合の最終フォールバック。 */
 const FALLBACK_SCENARIO_ID = 'srp_btn_vs_bb'
@@ -64,7 +66,7 @@ export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | '
 export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
 /** GtoTrainerViewのサブ画面タブ。P6 B10からstoreへ引き上げた(openBookmark/closeBookmarkが
  *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。 */
-export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings'
+export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings' | 'daily'
 /** 表示中のreviewの由来。'bookmark'ならReviewScreenの「次のハンド」を「一覧へ戻る」に差し替える。 */
 export type ReviewSource = 'live' | 'bookmark' | 'custom'
 
@@ -112,6 +114,16 @@ export interface SessionTally {
   totalNetBb: number
 }
 
+export interface DailyChallengeState {
+  dateKey: string
+  handIndex: number
+  totalHands: number
+  results: DailyAnswer[]
+  phase: 'idle' | 'playing' | 'done'
+  ratingBefore: number
+  ratingAfter: number | null
+}
+
 export function initialTally(): SessionTally {
   return { spots: 0, correct: 0, marginal: 0, totalEvLossBb: 0, hands: 0, decisions: 0, totalNetBb: 0 }
 }
@@ -150,6 +162,12 @@ export interface GtoState {
 
   activeTab: GtoTab
   setActiveTab: (tab: GtoTab) => void
+
+  dailyChallenge: DailyChallengeState | null
+  dailyRank: number
+  startDailyChallenge: () => Promise<void>
+  /** デイリー用に次の固定問題をロードする。UIはstartDailyChallenge/chooseAction経由でのみ使う。 */
+  advanceDailyChallenge: () => Promise<void>
 
   /** シナリオID→生成済みフロップID配列。未ロードの間はnull(GTOタブ初回マウントでloadAvailability()を呼ぶ想定)。 */
   availability: Map<string, string[]> | null
@@ -210,6 +228,52 @@ export const useGtoStore = create<GtoState>((set, get) => ({
 
   activeTab: 'play',
   setActiveTab: (tab: GtoTab) => set({ activeTab: tab }),
+
+  dailyChallenge: null,
+  dailyRank: loadDailyRank(),
+  startDailyChallenge: async () => {
+    const dateKey = dailyDateKey()
+    const existing = loadDailyResults()[dateKey]
+    const current = get().dailyChallenge
+    if (existing) {
+      const rating = get().dailyRank
+      set({
+        dailyChallenge: { dateKey, handIndex: existing.handCount, totalHands: existing.handCount, results: [], phase: 'done', ratingBefore: rating, ratingAfter: rating },
+      })
+      return
+    }
+    if (current?.phase === 'playing' && current.dateKey === dateKey) return
+    const rating = get().dailyRank
+    set({ dailyChallenge: { dateKey, handIndex: 0, totalHands: DAILY_HAND_COUNT, results: [], phase: 'playing', ratingBefore: rating, ratingAfter: null } })
+    await get().advanceDailyChallenge()
+  },
+  advanceDailyChallenge: async () => {
+    const challenge = get().dailyChallenge
+    if (!challenge || challenge.phase !== 'playing') return
+    const seeds = pickDailySpotSeeds(challenge.dateKey, challenge.totalHands)[challenge.handIndex]
+    if (!seeds) return
+    get().fullHandController?.dispose()
+    set({
+      status: 'loading', spot: null, grading: null, chosenLabel: null, errorMessage: null,
+      fullHand: null, fullHandController: null, review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0,
+    })
+    try {
+      await get().loadAvailability()
+      const { settings, availability } = get()
+      const playable = availability ? playableScenarioIds(availability) : new Set<string>()
+      const pool = selectScenarioPool(SCENARIOS, settings.enabledScenarioIds, playable)
+      const scenario = pickWeightedScenario(pool, seeds.scenarioRng)
+      const flop = pickWeightedFlop(selectFlopPool(FLOPS, availability?.get(scenario.id)), seeds.flopRng)
+      const flopSolution = await loadFlopSolution(scenario.id, flop.cards.join(''))
+      const userSeat: Seat = seeds.seatRng() < 0.5 ? 0 : 1
+      const spot = createSpot(scenario, flop, flopSolution, userSeat, seeds.seatRng)
+      // 非同期ロード中に別の日へ切り替わっていた場合、古い問題を表示しない。
+      if (get().dailyChallenge?.dateKey !== challenge.dateKey || get().dailyChallenge?.handIndex !== challenge.handIndex) return
+      set({ status: 'userTurn', spot, grading: null, chosenLabel: null, errorMessage: null })
+    } catch (e) {
+      set({ status: 'error', errorMessage: e instanceof Error ? e.message : String(e) })
+    }
+  },
 
   settings: loadGtoSettings(),
   setMode: (mode: GtoMode) => {
@@ -464,8 +528,8 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   },
 
   chooseAction: (label: string) => {
-    const { settings, fullHandController, spot, sessionTally } = get()
-    if (settings.mode === 'full') {
+    const { settings, fullHandController, spot, sessionTally, dailyChallenge } = get()
+    if (dailyChallenge?.phase !== 'playing' && settings.mode === 'full') {
       fullHandController?.chooseAction(label)
       return
     }
@@ -477,6 +541,33 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       correct: sessionTally.correct + (grading.verdict === 'correct' ? 1 : 0),
       marginal: sessionTally.marginal + (grading.verdict === 'marginal' ? 1 : 0),
       totalEvLossBb: sessionTally.totalEvLossBb + Math.max(0, grading.evLossBb),
+    }
+    if (dailyChallenge?.phase === 'playing') {
+      const results = [...dailyChallenge.results, { verdict: grading.verdict, evLossBb: grading.evLossBb }]
+      const handIndex = dailyChallenge.handIndex + 1
+      if (handIndex >= dailyChallenge.totalHands) {
+        const summary = computeDailyScore(results)
+        const ratingAfter = applyDailyResultToRank(dailyChallenge.ratingBefore, summary.score)
+        saveDailyResult(dailyChallenge.dateKey, {
+          score: summary.score,
+          correctCount: summary.correctCount,
+          totalEvLossBb: summary.totalEvLossBb,
+          handCount: dailyChallenge.totalHands,
+        })
+        saveDailyRank(ratingAfter)
+        set({
+          status: 'graded', grading, chosenLabel: label, sessionTally: nextTally,
+          dailyRank: ratingAfter,
+          dailyChallenge: { ...dailyChallenge, handIndex, results, phase: 'done', ratingAfter },
+        })
+      } else {
+        set({
+          status: 'loading', grading, chosenLabel: label, sessionTally: nextTally,
+          dailyChallenge: { ...dailyChallenge, handIndex, results },
+        })
+        void get().advanceDailyChallenge()
+      }
+      return
     }
     const review = buildReview(spot, grading, label)
     set({

@@ -135,9 +135,9 @@ export function getScenario(id: string): Scenario {
 }
 
 /** 実戦頻度の重みに基づくランダム抽選(設定によるフィルタ後の候補リストを渡す想定)。 */
-export function pickWeightedScenario(pool: Scenario[] = SCENARIOS): Scenario {
+export function pickWeightedScenario(pool: Scenario[] = SCENARIOS, rng: () => number = Math.random): Scenario {
   const total = pool.reduce((s, sc) => s + sc.weight, 0)
-  let r = Math.random() * total
+  let r = rng() * total
   for (const sc of pool) {
     r -= sc.weight
     if (r <= 0) return sc

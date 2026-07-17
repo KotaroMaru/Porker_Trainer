@@ -118,4 +118,12 @@ describe('GtoTrainerView (実.binフィクスチャによる結合テスト, P6 
     expect(screen.getByText('ボード')).toBeInTheDocument()
     expect(screen.getByText('一覧へ戻る')).toBeInTheDocument()
   })
+
+  it('デイリータブに開始画面とランクを表示する', () => {
+    useGtoStore.setState({ activeTab: 'daily', dailyChallenge: null, dailyRank: 1000 })
+    render(<GtoTrainerView />)
+    expect(screen.getByText('本日のチャレンジ（10問）')).toBeInTheDocument()
+    expect(screen.getByText('1000')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '今日のチャレンジを開始' })).toBeInTheDocument()
+  })
 })
