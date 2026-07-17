@@ -84,15 +84,16 @@ describe('ReviewScreen', () => {
 
     // ⑤ 「なぜ」解説カード(computing→readyを待っているのでheadlineが出ているはず)
     // headline文言(buildHeadline)は「GTO正解」「が最善」「境界上の手」のいずれかを必ず含み、
-    // かつナビゲータ/ステッパーの短いラベルには出現しないため一意に識別できる。
+    // marginal時はステッパーにも「境界上の手」が出るため、解説カードを含むことだけを確認する。
     await waitFor(() => {
-      expect(screen.getByText(/GTO正解|が最善|境界上の手/)).toBeInTheDocument()
+      expect(screen.getAllByText(/GTO正解|が最善|境界上の手/).length).toBeGreaterThan(0)
     })
 
     // ⑥ レンジグリッド(169セル)
     await waitFor(() => {
       expect(document.querySelectorAll('[data-hand]').length).toBe(169)
     })
+    expect(screen.getByText(/セルの色分けはハンドクラス全体の平均戦略/)).toBeInTheDocument()
 
     // ⑦ 折りたたみ3パネル
     expect(screen.getByText('相手の応答レンジ分析')).toBeInTheDocument()
@@ -119,9 +120,9 @@ describe('ReviewScreen', () => {
 
     render(<ReviewScreen />)
     // headline文言(buildHeadline)は「GTO正解」「が最善」「境界上の手」のいずれかを必ず含み、
-    // かつナビゲータ/ステッパーの短いラベルには出現しないため一意に識別できる。
+    // marginal時はステッパーにも「境界上の手」が出るため、解説カードを含むことだけを確認する。
     await waitFor(() => {
-      expect(screen.getByText(/GTO正解|が最善|境界上の手/)).toBeInTheDocument()
+      expect(screen.getAllByText(/GTO正解|が最善|境界上の手/).length).toBeGreaterThan(0)
     })
 
     screen.getByText('AIに質問用コピー').click()

@@ -6,6 +6,7 @@
 
 import type { Combo } from '../../analysis/range'
 import type { DecodedNode } from '../../gto/loader/binaryFormat'
+import { comboRustKey } from '../../gto/trainer/comboIndex'
 import { handStrFromCombo } from '../../gto/trainer/reviewBuilder'
 import { actionColor } from './actionColors'
 import { actionLabelJa } from './labels'
@@ -17,6 +18,8 @@ interface Props {
   weights: readonly number[]
   node: DecodedNode
   highlightHand?: string
+  /** ハイライト対象の実コンボ。指定時はセルのクラス平均と区別してtooltipに表示する。 */
+  highlightCombo?: Combo
   cellSize?: number
   title?: string
 }
@@ -59,8 +62,13 @@ function cellHandStr(i: number, j: number): string {
   return RANKS[j] + RANKS[i] + 'o'
 }
 
-export function RangeHeatGrid({ combos, weights, node, highlightHand, cellSize = 24, title }: Props) {
+export function RangeHeatGrid({ combos, weights, node, highlightHand, highlightCombo, cellSize = 24, title }: Props) {
   const cellMixes = computeCellMixes(combos, weights, node)
+  const highlightComboIdx = highlightCombo ? combos.findIndex((combo) => comboRustKey(combo) === comboRustKey(highlightCombo)) : -1
+  const highlightComboMix =
+    highlightComboIdx >= 0
+      ? node.actionLabels.map((label, actionIdx) => ({ label, freq: node.freqs[actionIdx * combos.length + highlightComboIdx] }))
+      : null
 
   return (
     <div style={{ overflowX: 'auto' }}>
@@ -83,7 +91,9 @@ export function RangeHeatGrid({ combos, weights, node, highlightHand, cellSize =
               const isHighlight = highlightHand === hand
               const visibleMix = mix?.filter((m) => m.freq > 0.001) ?? []
               let cumulative = 0
-              const tooltip = visibleMix.length > 0 ? `${hand}: ${visibleMix.map((m) => `${actionLabelJa(m.label)} ${(m.freq * 100).toFixed(0)}%`).join(' / ')}` : `${hand}: レンジ外`
+              const classTooltip = visibleMix.length > 0 ? `${hand}${isHighlight && highlightComboMix ? '（クラス平均）' : ''}: ${visibleMix.map((m) => `${actionLabelJa(m.label)} ${(m.freq * 100).toFixed(0)}%`).join(' / ')}` : `${hand}: レンジ外`
+              const heroTooltip = isHighlight && highlightComboMix ? ` / あなたの実際の手: ${highlightComboMix.filter((m) => m.freq > 0.001).map((m) => `${actionLabelJa(m.label)} ${(m.freq * 100).toFixed(0)}%`).join(' / ')}` : ''
+              const tooltip = classTooltip + heroTooltip
 
               return (
                 <div

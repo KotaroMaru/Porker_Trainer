@@ -1,12 +1,35 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeAll } from 'vitest'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { render, screen } from '@testing-library/react'
 import { RangeHeatGrid } from './RangeHeatGrid'
 import type { Combo } from '../../analysis/range'
 import type { Card } from '../../engine/types'
-import type { DecodedNode } from '../../gto/loader/binaryFormat'
+import { decodeSolutionFile, type DecodedNode, type DecodedSolution } from '../../gto/loader/binaryFormat'
+import { gradeDecision } from '../../gto/trainer/grading'
+import { buildComboIndexMapFromCombos, lookupComboIndex } from '../../gto/trainer/comboIndex'
+import { handStrFromCombo, initialWeightsInSolutionOrder } from '../../gto/trainer/reviewBuilder'
+import { getScenario } from '../../gto/data/scenarios'
+import { FLOPS } from '../../gto/data/flops'
 
 function card(rank: Card['rank'], suit: Card['suit']): Card {
   return { rank, suit }
+}
+
+/** RangeHeatGridの集計と同じ添字規約で、指定クラスの加重戦略を計算するテスト用ヘルパー。 */
+function computeCellMixesEquivalent(combos: readonly Combo[], weights: readonly number[], node: DecodedNode, hand: string): Map<string, number> {
+  const result = new Map<string, number>()
+  let totalWeight = 0
+  for (let h = 0; h < combos.length; h++) {
+    if (weights[h] <= 0 || handStrFromCombo(combos[h]) !== hand) continue
+    totalWeight += weights[h]
+    for (let a = 0; a < node.actionLabels.length; a++) {
+      const label = node.actionLabels[a]
+      result.set(label, (result.get(label) ?? 0) + weights[h] * node.freqs[a * combos.length + h])
+    }
+  }
+  for (const [label, sum] of result) result.set(label, sum / totalWeight)
+  return result
 }
 
 describe('RangeHeatGrid', () => {
@@ -63,9 +86,55 @@ describe('RangeHeatGrid', () => {
     expect(kkCell.style.outline).not.toContain('var(--gold)')
   })
 
+  it('ハイライトした実コンボのtooltipでは、クラス平均と実コンボの戦略を区別して表示する', () => {
+    render(<RangeHeatGrid combos={combos} weights={weights} node={node} highlightHand="AA" highlightCombo={combos[0]} />)
+    expect(screen.getByTitle('AA（クラス平均）: チェック 20% / ベット 33% 80% / あなたの実際の手: チェック 20% / ベット 33% 80%')).toBeInTheDocument()
+  })
+
   it('レンジ外セルには色帯が描画されない(ラベルのみ1件)', () => {
     const { container } = render(<RangeHeatGrid combos={combos} weights={weights} node={node} />)
     const emptyCell = container.querySelector('[data-hand="72o"]')
     expect(emptyCell!.children.length).toBe(1) // ハンドラベルのみ
+  })
+})
+
+describe('RangeHeatGrid (実.binのコンボ順序)', () => {
+  const scenarioId = '3bet_btn_vs_sb'
+  const flopId = '7h7s4c'
+  let solution: DecodedSolution
+
+  beforeAll(async () => {
+    const path = join(process.cwd(), 'public/gto/solutions', scenarioId, `${flopId}.bin`)
+    const bin = await readFile(path)
+    solution = decodeSolutionFile(bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength))
+  })
+
+  it('実コンボ単体の集計はgradeDecisionのactionBreakdownと一致し、クラス平均とは異なりうる', () => {
+    // BTN(A♦3♦)がSBのflop bet33にcallする、ユーザー報告と同じシナリオ/フロップを使う。
+    // BTNはIPなので、bet33後のnode.freqsの添字はipCombosの並びである。
+    const node = solution.nodes.get('bet33')
+    if (!node) throw new Error('fixture is missing bet33 node')
+    expect(node.player).toBe(1)
+    expect(node.actionLabels).toContain('call')
+
+    const userCombo: Combo = [card(14, 'd'), card(3, 'd')]
+    const comboIdx = lookupComboIndex(buildComboIndexMapFromCombos(solution.ipCombos), userCombo)
+    const grading = gradeDecision(node, comboIdx, 'call')
+
+    // computeCellMixesと同じ添字計算のまま、対象をこの1コンボだけに絞る。
+    // これが一致しなければコンボ順序/インデックスの実バグである。
+    const onlyHeroWeights = solution.ipCombos.map((_, i) => (i === comboIdx ? 1 : 0))
+    const heroOnlyMix = computeCellMixesEquivalent(solution.ipCombos, onlyHeroWeights, node, 'A3s')
+    for (const action of grading.actionBreakdown) {
+      expect(heroOnlyMix.get(action.label)).toBeCloseTo(action.freq, 7)
+    }
+
+    // 通常のグリッドは、このノードに到達したBTNレンジ全体のA3s平均を描く。
+    // SBのbet33前にBTNの重みは変化しないため、初期IPレンジ重みを使う。
+    const scenario = getScenario(scenarioId)
+    const flop = FLOPS.find((candidate) => candidate.cards.join('') === flopId)
+    if (!flop) throw new Error('fixture flop not found')
+    const classMix = computeCellMixesEquivalent(solution.ipCombos, initialWeightsInSolutionOrder(scenario.raiser.rangeId, solution.flop, solution.ipCombos), node, 'A3s')
+    expect([...classMix].some(([label, freq]) => Math.abs(freq - (heroOnlyMix.get(label) ?? 0)) > 0.01)).toBe(true)
   })
 })

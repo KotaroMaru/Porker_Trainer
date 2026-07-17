@@ -228,9 +228,11 @@ export function ReviewScreen() {
           weights={decision.heroWeights}
           node={decision.decodedNode}
           highlightHand={handStrFromCombo(review.userCombo)}
+          highlightCombo={review.userCombo}
           title="自分のレンジ戦略"
         />
       )}
+      {features && <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: -8 }}>セルの色分けはハンドクラス全体の平均戦略です。枠で示したセルのツールチップでは、あなたの実際の1コンボの戦略も確認できます。</div>}
 
       {/* 7. 折りたたみ3パネル */}
       {features && (
