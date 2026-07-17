@@ -148,6 +148,64 @@ describe('buildExplanation: 網羅マトリクステスト(root/facingBet × cor
 })
 
 describe('buildExplanation: アクションカテゴリ別の理由段落分岐', () => {
+  it('バリューベットでは最善アクションの上位ターゲットを明記する', () => {
+    const decision = buildSyntheticDecision('root', 'correct')
+    const features = buildSyntheticFeatures('root', 'MIDDLE')
+    features.betTarget = {
+      chosen: { forLabel: 'bet33', valueTargetHands: [{ hand: 'TT', comboCount: 6, weightPct: 40 }, { hand: '99', comboCount: 6, weightPct: 30 }], bluffTargetHands: [] },
+      best: { forLabel: 'bet33', valueTargetHands: [{ hand: 'TT', comboCount: 6, weightPct: 40 }, { hand: '99', comboCount: 6, weightPct: 30 }], bluffTargetHands: [] },
+    }
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('TT・99からバリューを狙います')
+  })
+
+  it('ブラフベットでは最善アクションの上位フォールドターゲットを明記する', () => {
+    const decision = buildSyntheticDecision('root', 'correct')
+    const features = buildSyntheticFeatures('root', 'AIR')
+    features.betTarget = {
+      chosen: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [{ hand: 'AK', comboCount: 16, weightPct: 45 }, { hand: 'AQ', comboCount: 16, weightPct: 30 }] },
+      best: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [{ hand: 'AK', comboCount: 16, weightPct: 45 }, { hand: 'AQ', comboCount: 16, weightPct: 30 }] },
+    }
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('AK・AQをフォールドさせるブラフです')
+  })
+
+  it('ベットターゲットがnullまたは空でも既存の理由段落を生成できる', () => {
+    const decision = buildSyntheticDecision('root', 'correct')
+    const features = buildSyntheticFeatures('root', 'MIDDLE')
+    const withoutTargets = buildExplanation(decision, features).paragraphs[1]
+    expect(withoutTargets).toContain('バリューを稼げます')
+
+    features.betTarget = { chosen: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [] }, best: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [] } }
+    const withEmptyTargets = buildExplanation(decision, features).paragraphs[1]
+    expect(withEmptyTargets).toContain('バリューを稼げます')
+    expect(withEmptyTargets).not.toContain('undefined')
+  })
+
+  it('関連するボードテクスチャとチェックレイズ誘発を理由段落へ織り込む', () => {
+    const decision = buildSyntheticDecision('root', 'correct')
+    decision.grading.bestLabel = 'check'
+    decision.chosenLabel = 'check'
+    const features = buildSyntheticFeatures('root', 'MONSTER')
+    features.boardTexture = { paired: true, suitPattern: 'rainbow', heightJa: 'ハイ', connected: false, summaryJa: 'ペアボード・レインボー・ドライ' }
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('チェックレイズ')
+    expect(reason).toContain('ペアボード・レインボー・ドライ')
+  })
+
+  it('コネクテッドボードのベットではテクスチャに応じた理由を追加する', () => {
+    const decision = buildSyntheticDecision('root', 'correct')
+    const features = buildSyntheticFeatures('root', 'MIDDLE')
+    features.boardTexture = { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: true, summaryJa: 'レインボー・コネクテッド' }
+
+    const reason = buildExplanation(decision, features).paragraphs[1]
+    expect(reason).toContain('レインボー・コネクテッド')
+    expect(reason).toContain('ストレートが増えやすく')
+  })
+
   it('bestLabelがcheck(root)の場合でも例外なく生成できる', () => {
     const decision = buildSyntheticDecision('root', 'correct')
     decision.grading.bestLabel = 'check'

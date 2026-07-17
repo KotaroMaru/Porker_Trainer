@@ -113,6 +113,37 @@ function buildHandParagraph(features: SpotFeatures): string {
   return base + drawLine
 }
 
+/** 最善アクションに対応するターゲットだけを使い、別サイズの集計を誤って混ぜない。 */
+function bestBetTargetHands(decision: ReviewDecision, features: SpotFeatures, kind: 'value' | 'bluff'): string[] {
+  const best = features.betTarget?.best
+  // 正解時はchosen/bestが同じ内容だが、データがbest側に無いケースにも防御的に対応する。
+  const chosen = decision.chosenLabel === decision.grading.bestLabel ? features.betTarget?.chosen : null
+  const target = best?.forLabel === decision.grading.bestLabel ? best : chosen?.forLabel === decision.grading.bestLabel ? chosen : null
+  const hands = kind === 'value' ? target?.valueTargetHands : target?.bluffTargetHands
+  return (hands ?? []).slice(0, 3).map((entry) => entry.hand).filter((hand) => hand.length > 0)
+}
+
+function buildBetTargetLine(decision: ReviewDecision, features: SpotFeatures, kind: 'value' | 'bluff'): string {
+  const hands = bestBetTargetHands(decision, features, kind)
+  if (hands.length === 0) return ''
+  return kind === 'value' ? `相手の${hands.join('・')}からバリューを狙います。` : `相手の${hands.join('・')}をフォールドさせるブラフです。`
+}
+
+/** テクスチャが次ストリートの価値・危険度に直結する局面だけ、短く補足する。 */
+function buildTextureLine(features: SpotFeatures, category: ActionCategory): string {
+  const { boardTexture } = features
+  if (category === 'bet' && boardTexture.connected) {
+    return `この${boardTexture.summaryJa}ボードはターン以降にストレートが増えやすく、今のストリートでエクイティを実現する意味もあります。`
+  }
+  if (category === 'bet' && boardTexture.suitPattern === 'twoTone' && !features.draws.hasFlushDraw) {
+    return `この${boardTexture.summaryJa}では相手にフラッシュドローを与えうるため、ベットで料金を課します。`
+  }
+  if (category === 'check' && boardTexture.paired) {
+    return `この${boardTexture.summaryJa}では相手のトリップスやフルハウスへの発展も意識し、ポットをむやみに膨らませません。`
+  }
+  return ''
+}
+
 function buildReasonParagraph(decision: ReviewDecision, features: SpotFeatures): string {
   const bestLabel = decision.grading.bestLabel
   const category = actionCategory(bestLabel)
@@ -124,24 +155,29 @@ function buildReasonParagraph(decision: ReviewDecision, features: SpotFeatures):
     if (features.handClass === 'MONSTER' || features.handClass === 'STRONG_MADE' || features.handClass === 'MIDDLE') {
       return (
         `${features.rangeAdvantage.verdictJa}な状況で、相手の継続レンジに対しても${pctVal((continueEq ?? features.heroComboEquity) * 100)}のエクイティがあるためバリューを稼げます。` +
-        (foldFreq !== null ? `相手のフォールド率は${pctFrac(foldFreq)}です。` : '')
+        buildBetTargetLine(decision, features, 'value') +
+        (foldFreq !== null ? `相手のフォールド率は${pctFrac(foldFreq)}です。` : '') +
+        buildTextureLine(features, category)
       )
     }
     if (features.handClass === 'STRONG_DRAW' || features.handClass === 'WEAK_DRAW') {
       return (
         `完成すれば強い手になるドローで、相手のフォールド率${pctFrac(foldFreq)}に加え、コールされても継続レンジに対して${pctVal((continueEq ?? features.heroComboEquity) * 100)}のエクイティを残すセミブラフです。` +
-        (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしている点も後押しします。` : '')
+        (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしている点も後押しします。` : '') +
+        buildTextureLine(features, category)
       )
     }
     return (
       `ショーダウン価値の低い手ですが、相手のフォールド率${pctFrac(foldFreq)}を突くブラフとして機能します。` +
-      (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしています。` : '')
+      buildBetTargetLine(decision, features, 'bluff') +
+      (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしています。` : '') +
+      buildTextureLine(features, category)
     )
   }
 
   if (category === 'check') {
     if (features.handClass === 'MONSTER' || features.handClass === 'STRONG_MADE') {
-      return '強い手ですが、ここでベットしても相手のコール/継続レンジから十分な価値を引き出しにくいため、チェックで相手にブラフさせる/展開を作る方が得です。'
+      return '強い手ですが、ここでベットしても相手のコール/継続レンジから十分な価値を引き出しにくいため、チェックで相手のベットを誘い、チェックレイズにつなげる方が得です。' + buildTextureLine(features, category)
     }
     if (features.handClass === 'AIR' || features.handClass === 'STRONG_DRAW' || features.handClass === 'WEAK_DRAW') {
       return `無理に攻めずチェックでポットを小さく保ち、次のストリートでエクイティを活かす方針です(${features.nutsAdvantage.verdictJa})。`
