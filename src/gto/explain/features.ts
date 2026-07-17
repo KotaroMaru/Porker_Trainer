@@ -57,8 +57,33 @@ export interface BlockedHand {
   weightPct: number
 }
 
+export interface BoardTexture {
+  /** ペア/トリップス等、ボード自体に重複ランクがあるか。 */
+  paired: boolean
+  /** 全同スート/同スートあり/全て異なるスート、の3区分。 */
+  suitPattern: 'monotone' | 'twoTone' | 'rainbow'
+  /** Q以上を含むハイ、最高ランク8-Jのミドル、7以下のロー。 */
+  heightJa: 'ハイ' | 'ミドル' | 'ロー'
+  /** 3つの異なるランクが4ランク幅以内に収まる(ホイールのAを1としても判定)か。 */
+  connected: boolean
+  /** テンプレートへそのまま渡せる、日本語の短い要約。 */
+  summaryJa: string
+}
+
+export interface BetActionTarget {
+  forLabel: string
+  valueTargetHands: BlockedHand[]
+  bluffTargetHands: BlockedHand[]
+}
+
+export interface BetTarget {
+  chosen: BetActionTarget | null
+  best: BetActionTarget | null
+}
+
 export interface SpotFeatures {
   nodeContext: NodeContext
+  boardTexture: BoardTexture
   handClass: HandStrength
   draws: ReturnType<typeof classifyDraws>
   heroComboEquity: number
@@ -76,6 +101,8 @@ export interface SpotFeatures {
     valueBlockedHands: BlockedHand[]
     continueBlockedHands: BlockedHand[] | null
   }
+  /** chosen/bestの少なくとも一方にfoldを含む応答ノードがある場合のみ非null。 */
+  betTarget: BetTarget | null
   mdf: number | null
   potOddsRequiredEq: number | null
   sprBucket: { spr: number; labelJa: string }
@@ -85,6 +112,41 @@ export interface SpotFeatures {
 const NUTS_EQUITY_THRESHOLD = 0.8
 const VALUE_EQUITY_THRESHOLD = 0.66
 const ADVANTAGE_TOLERANCE = 0.03
+const VALUE_TARGET_EQUITY_THRESHOLD = 0.5
+
+export function classifyBoardTexture(board: readonly Card[]): BoardTexture {
+  if (board.length < 3 || board.length > 5) {
+    throw new Error(`classifyBoardTexture: expected 3 to 5 cards, got ${board.length}`)
+  }
+
+  const rankCounts = new Map<number, number>()
+  const suitCounts = new Map<Card['suit'], number>()
+  for (const card of board) {
+    rankCounts.set(card.rank, (rankCounts.get(card.rank) ?? 0) + 1)
+    suitCounts.set(card.suit, (suitCounts.get(card.suit) ?? 0) + 1)
+  }
+
+  const paired = [...rankCounts.values()].some((count) => count >= 2)
+  const maxSuitCount = Math.max(...suitCounts.values())
+  const suitPattern: BoardTexture['suitPattern'] = maxSuitCount === board.length ? 'monotone' : maxSuitCount >= 2 ? 'twoTone' : 'rainbow'
+  const maxRank = Math.max(...board.map((card) => card.rank))
+  const heightJa: BoardTexture['heightJa'] = maxRank >= 12 ? 'ハイ' : maxRank >= 8 ? 'ミドル' : 'ロー'
+
+  const uniqueRanks = [...rankCounts.keys()]
+  const rankViews = [uniqueRanks, uniqueRanks.includes(14) ? uniqueRanks.map((rank) => (rank === 14 ? 1 : rank)) : uniqueRanks]
+  const connected = rankViews.some((ranks) => {
+    const sorted = [...ranks].sort((a, b) => a - b)
+    for (let i = 0; i + 2 < sorted.length; i++) {
+      if (sorted[i + 2] - sorted[i] <= 4) return true
+    }
+    return false
+  })
+
+  const suitPatternJa = suitPattern === 'monotone' ? 'モノトーン' : suitPattern === 'twoTone' ? 'ツートーン' : 'レインボー'
+  const summaryJa = [paired ? 'ペアボード' : null, suitPatternJa, connected ? 'コネクテッド' : 'ドライ'].filter((part) => part !== null).join('・')
+
+  return { paired, suitPattern, heightJa, connected, summaryJa }
+}
 
 function advantageVerdict(heroValue: number, villainValue: number, adjLabel: string): string {
   if (heroValue > villainValue + ADVANTAGE_TOLERANCE) return `${adjLabel}優位`
@@ -158,12 +220,31 @@ function computeResponseBreakdown(decision: ReviewDecision, node: DecodedNode): 
   })
 }
 
-function computeResponses(decision: ReviewDecision, userCombo: Combo): ActionResponseSummary[] {
+function aggregateTargetHands(villainCombos: readonly Combo[], weights: readonly number[], eligible?: (index: number) => boolean): BlockedHand[] {
+  const byHand = new Map<string, { comboCount: number; weight: number }>()
+  let total = 0
+  for (let i = 0; i < villainCombos.length; i++) {
+    const weight = weights[i]
+    if (weight <= 0 || !Number.isFinite(weight) || (eligible && !eligible(i))) continue
+    const hand = handStrFromCombo(villainCombos[i])
+    const entry = byHand.get(hand) ?? { comboCount: 0, weight: 0 }
+    entry.comboCount += 1
+    entry.weight += weight
+    total += weight
+    byHand.set(hand, entry)
+  }
+  return [...byHand.entries()]
+    .map(([hand, entry]) => ({ hand, comboCount: entry.comboCount, weightPct: total > 0 ? (entry.weight / total) * 100 : 0 }))
+    .sort((a, b) => b.weightPct - a.weightPct || a.hand.localeCompare(b.hand))
+}
+
+function computeResponses(decision: ReviewDecision, userCombo: Combo): { responses: ActionResponseSummary[]; betTargets: Map<string, BetActionTarget> } {
   const bestLabel = decision.grading.bestLabel
   const chosenLabel = decision.chosenLabel
   const handCount = decision.villainCombos.length
+  const betTargets = new Map<string, BetActionTarget>()
 
-  return decision.decodedNode.actionLabels.map((label) => {
+  const responses = decision.decodedNode.actionLabels.map((label) => {
     const rn = decision.responseNodes.find((r) => r.forLabel === label)
     if (!rn) {
       return { forLabel: label, terminal: true, breakdown: [], foldFreq: 0, heroEquityVsContinueRange: null }
@@ -189,10 +270,25 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): ActionRes
         board: decision.boardAtDecision,
       })
       heroEquityVsContinueRange = eqResult.heroEquity[0]
+
+      // foldを持たない応答ノード(check→bet等)は、ベットへのfold/continue分布を
+      // 定義できないためターゲット抽出の対象外にする。
+      if (foldIdx >= 0) {
+        const valueTargetHands = aggregateTargetHands(
+          decision.villainCombos,
+          continueWeights,
+          (index) => !Number.isNaN(eqResult.villainEquity[index]) && eqResult.villainEquity[index] < VALUE_TARGET_EQUITY_THRESHOLD,
+        )
+        const foldWeights = decision.villainWeights.map((weight, index) => weight * node.freqs[foldIdx * handCount + index])
+        const bluffTargetHands = aggregateTargetHands(decision.villainCombos, foldWeights)
+        betTargets.set(label, { forLabel: label, valueTargetHands, bluffTargetHands })
+      }
     }
 
     return { forLabel: label, terminal: false, breakdown, foldFreq, heroEquityVsContinueRange }
   })
+
+  return { responses, betTargets }
 }
 
 function computeBlockedValuePct(
@@ -268,6 +364,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   if (!decision) throw new Error(`computeSpotFeatures: no decision at index ${decisionIdx}`)
   const userCombo = review.userCombo
   const board = decision.boardAtDecision
+  const boardTexture = classifyBoardTexture(board)
 
   const handClass = classifyHandStrength(userCombo, board)
   const draws = classifyDraws(userCombo, board)
@@ -300,7 +397,10 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const equityBuckets = buildEquityBuckets(rangeEq.heroEquity, decision.heroWeights, rangeEq.villainEquity, decision.villainWeights)
 
-  const responses = computeResponses(decision, userCombo)
+  const { responses, betTargets } = computeResponses(decision, userCombo)
+  const chosenBetTarget = betTargets.get(decision.chosenLabel) ?? null
+  const bestBetTarget = betTargets.get(decision.grading.bestLabel) ?? null
+  const betTarget: BetTarget | null = chosenBetTarget || bestBetTarget ? { chosen: chosenBetTarget, best: bestBetTarget } : null
 
   const nodeContext = computeNodeContext(decision)
 
@@ -348,6 +448,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   return {
     nodeContext,
+    boardTexture,
     handClass,
     draws,
     heroComboEquity,
@@ -357,6 +458,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     equityBuckets,
     responses,
     blockers: { valueCombosReducedPct, continueCombosReducedPct, blockedExamples, valueBlockedHands, continueBlockedHands },
+    betTarget,
     mdf,
     potOddsRequiredEq,
     sprBucket,

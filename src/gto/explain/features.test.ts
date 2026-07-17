@@ -5,9 +5,10 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { computeSpotFeatures, HAND_CLASS_JA } from './features'
+import { classifyBoardTexture, computeSpotFeatures, HAND_CLASS_JA } from './features'
 import { computeSharedRunoutEquity } from './rangeEquity'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
+import { RANGE_TRACKER_EPSILON } from '../trainer/rangeTracker'
 import { createSpot, applyUserAction } from '../trainer/gameFlow'
 import { actionLabelsWithAmounts } from '../trainer/actionMath'
 import { decodeSolutionFile, type DecodedSolution } from '../loader/binaryFormat'
@@ -19,6 +20,62 @@ import type { FlopDef } from '../types'
 import type { Card } from '../../engine/types'
 
 const FLOP_STR = 'AsQsJs'
+const NUMERIC_TOLERANCE_DIGITS = 6
+
+function card(rank: Card['rank'], suit: Card['suit']): Card {
+  return { rank, suit }
+}
+
+describe('classifyBoardTexture', () => {
+  it('ペアボード AsAd7c をレインボーかつドライなハイボードに分類する', () => {
+    const texture = classifyBoardTexture([card(14, 's'), card(14, 'd'), card(7, 'c')])
+
+    expect(texture).toEqual({
+      paired: true,
+      suitPattern: 'rainbow',
+      heightJa: 'ハイ',
+      connected: false,
+      summaryJa: 'ペアボード・レインボー・ドライ',
+    })
+  })
+
+  it('Ah7h2h をモノトーンかつドライなハイボードに分類する', () => {
+    const texture = classifyBoardTexture([card(14, 'h'), card(7, 'h'), card(2, 'h')])
+
+    expect(texture.paired).toBe(false)
+    expect(texture.suitPattern).toBe('monotone')
+    expect(texture.heightJa).toBe('ハイ')
+    expect(texture.connected).toBe(false)
+    expect(texture.summaryJa).toBe('モノトーン・ドライ')
+  })
+
+  it('9s8h7c をレインボーかつコネクテッドなミドルボードに分類する', () => {
+    const texture = classifyBoardTexture([card(9, 's'), card(8, 'h'), card(7, 'c')])
+
+    expect(texture).toEqual({
+      paired: false,
+      suitPattern: 'rainbow',
+      heightJa: 'ミドル',
+      connected: true,
+      summaryJa: 'レインボー・コネクテッド',
+    })
+  })
+
+  it('Aをロー側として扱い、5d3s2c を含むホイール形をコネクテッドと判定する', () => {
+    const texture = classifyBoardTexture([card(14, 'c'), card(5, 'd'), card(3, 's'), card(2, 'c')])
+
+    expect(texture.suitPattern).toBe('twoTone')
+    expect(texture.connected).toBe(true)
+  })
+
+  it('7s5h2c をローかつドライに分類し、範囲外の枚数を拒否する', () => {
+    const texture = classifyBoardTexture([card(7, 's'), card(5, 'h'), card(2, 'c')])
+
+    expect(texture.heightJa).toBe('ロー')
+    expect(texture.connected).toBe(false)
+    expect(() => classifyBoardTexture([card(14, 's'), card(13, 'h')])).toThrow('expected 3 to 5 cards')
+  })
+})
 
 function fixedRng(sequence: number[]): () => number {
   let i = 0
@@ -143,6 +200,123 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       const withEquity = features.responses.filter((r) => r.heroEquityVsContinueRange !== null)
       expect(withEquity.length).toBeGreaterThan(0)
       expect(withEquity.length).toBeLessThanOrEqual(2)
+    })
+
+    it('betTargetは実コンボ対継続レンジの個別EQとfold頻度をクラス別に正規化して集計する', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = 'bet33'
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const features = computeSpotFeatures(review, 0)
+      const decision = review.decisions[0]
+      const rn = decision.responseNodes.find((response) => response.forLabel === chosenLabel)
+      expect(rn).toBeDefined()
+      const foldIdx = rn!.node.actionLabels.indexOf('fold')
+      expect(foldIdx).toBeGreaterThanOrEqual(0)
+
+      const foldFreqs = decision.villainCombos.map((_, index) => rn!.node.freqs[foldIdx * decision.villainCombos.length + index])
+      const unnormalizedContinue = decision.villainWeights.map((weight, index) => weight * Math.max(1 - foldFreqs[index], RANGE_TRACKER_EPSILON))
+      const continueTotal = unnormalizedContinue.reduce((sum, weight) => sum + weight, 0)
+      const continueWeights = unnormalizedContinue.map((weight) => weight / continueTotal)
+      // 本体とは独立した呼び出しで、ヒーロー実コンボ視点の各villainコンボEQを照合する。
+      // tieは0.5として扱われるため、value対象はvillainEquity < 0.5に限定する。
+      const comboEq = computeSharedRunoutEquity({
+        heroCombos: [review.userCombo],
+        heroWeights: [1],
+        villainCombos: decision.villainCombos,
+        villainWeights: continueWeights,
+        board: decision.boardAtDecision,
+      })
+
+      const expectedValue = new Map<string, { comboCount: number; weight: number }>()
+      let expectedValueWeight = 0
+      let blockedComboCount = 0
+      const userKeys = new Set(review.userCombo.map(cardKey))
+      for (let i = 0; i < decision.villainCombos.length; i++) {
+        const collides = decision.villainCombos[i].some((comboCard) => userKeys.has(cardKey(comboCard)))
+        if (collides && decision.villainWeights[i] > 0) {
+          blockedComboCount++
+          expect(Number.isNaN(comboEq.villainEquity[i])).toBe(true)
+        }
+        if (continueWeights[i] <= 0 || Number.isNaN(comboEq.villainEquity[i]) || comboEq.villainEquity[i] >= 0.5) continue
+        const hand = handStrFromCombo(decision.villainCombos[i])
+        const entry = expectedValue.get(hand) ?? { comboCount: 0, weight: 0 }
+        entry.comboCount++
+        entry.weight += continueWeights[i]
+        expectedValueWeight += continueWeights[i]
+        expectedValue.set(hand, entry)
+      }
+      expect(blockedComboCount).toBeGreaterThan(0)
+
+      const expectedBluff = new Map<string, { comboCount: number; weight: number }>()
+      let expectedBluffWeight = 0
+      for (let i = 0; i < decision.villainCombos.length; i++) {
+        const foldWeight = decision.villainWeights[i] * foldFreqs[i]
+        if (foldWeight <= 0) continue
+        const hand = handStrFromCombo(decision.villainCombos[i])
+        const entry = expectedBluff.get(hand) ?? { comboCount: 0, weight: 0 }
+        entry.comboCount++
+        entry.weight += foldWeight
+        expectedBluffWeight += foldWeight
+        expectedBluff.set(hand, entry)
+      }
+
+      const target = features.betTarget?.chosen
+      expect(target?.forLabel).toBe(chosenLabel)
+      const valueTargets = target?.valueTargetHands ?? []
+      const bluffTargets = target?.bluffTargetHands ?? []
+      expect(valueTargets.length).toBe(expectedValue.size)
+      expect(bluffTargets.length).toBe(expectedBluff.size)
+      expect(new Set(valueTargets.map((entry) => entry.hand)).size).toBe(valueTargets.length)
+      expect(new Set(bluffTargets.map((entry) => entry.hand)).size).toBe(bluffTargets.length)
+      expect(valueTargets.reduce((sum, entry) => sum + entry.weightPct, 0)).toBeCloseTo(100, NUMERIC_TOLERANCE_DIGITS)
+      expect(bluffTargets.reduce((sum, entry) => sum + entry.weightPct, 0)).toBeCloseTo(100, NUMERIC_TOLERANCE_DIGITS)
+
+      for (let i = 0; i < valueTargets.length; i++) {
+        const actual = valueTargets[i]
+        const expected = expectedValue.get(actual.hand)
+        expect(expected).toBeDefined()
+        expect(actual.comboCount).toBe(expected!.comboCount)
+        expect(actual.weightPct).toBeCloseTo((expected!.weight / expectedValueWeight) * 100, NUMERIC_TOLERANCE_DIGITS)
+        if (i > 0) expect(valueTargets[i - 1].weightPct).toBeGreaterThanOrEqual(actual.weightPct)
+      }
+      for (let i = 0; i < bluffTargets.length; i++) {
+        const actual = bluffTargets[i]
+        const expected = expectedBluff.get(actual.hand)
+        expect(expected).toBeDefined()
+        expect(actual.comboCount).toBe(expected!.comboCount)
+        expect(actual.weightPct).toBeCloseTo((expected!.weight / expectedBluffWeight) * 100, NUMERIC_TOLERANCE_DIGITS)
+        if (i > 0) expect(bluffTargets[i - 1].weightPct).toBeGreaterThanOrEqual(actual.weightPct)
+      }
+    })
+
+    it('chosen/bestともfold応答を持たないcheckならbetTargetはnull', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const grading = applyUserAction(spot, 'check')
+      const review = buildReview(spot, { ...grading, bestLabel: 'check' }, 'check')
+      const features = computeSpotFeatures(review, 0)
+
+      expect(features.betTarget).toBeNull()
+    })
+
+    it('fold頻度が全コンボ0ならbluffTargetHandsは空配列になる', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = 'bet33'
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const decision = review.decisions[0]
+      const responseNodes = decision.responseNodes.map((response) => {
+        if (response.forLabel !== chosenLabel) return response
+        const foldIdx = response.node.actionLabels.indexOf('fold')
+        const freqs = new Float32Array(response.node.freqs)
+        for (let i = 0; i < decision.villainCombos.length; i++) freqs[foldIdx * decision.villainCombos.length + i] = 0
+        return { ...response, node: { ...response.node, freqs } }
+      })
+      const modifiedReview = { ...review, decisions: [{ ...decision, responseNodes }] }
+
+      const features = computeSpotFeatures(modifiedReview, 0)
+
+      expect(features.betTarget?.chosen?.bluffTargetHands).toEqual([])
     })
   })
 

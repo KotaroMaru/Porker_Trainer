@@ -92,6 +92,7 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
 
   return {
     nodeContext,
+    boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
     handClass,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 },
     heroComboEquity: 0.55,
@@ -107,6 +108,7 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
       valueBlockedHands: [{ hand: 'AKs', comboCount: 1, weightPct: 100 }],
       continueBlockedHands: kind === 'facingBet' ? [{ hand: 'AKs', comboCount: 1, weightPct: 100 }] : null,
     },
+    betTarget: null,
     mdf: kind === 'facingBet' ? 0.6 : null,
     potOddsRequiredEq: kind === 'facingBet' ? 0.33 : null,
     sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
