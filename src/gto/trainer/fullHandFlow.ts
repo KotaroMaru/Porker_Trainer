@@ -184,7 +184,7 @@ const REFINE_SOLVE = {
 }
 
 /** weight>0のコンボからdeadCardと衝突するものを除いて再正規化する(ターン/リバーへの遷移時に使う)。 */
-function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {
+export function filterAndRenormalize(combos: readonly Combo[], weights: readonly number[], deadCardKey: string): { combos: Combo[]; weights: number[] } {
   const outCombos: Combo[] = []
   const outWeights: number[] = []
   for (let i = 0; i < combos.length; i++) {
@@ -212,8 +212,11 @@ function dealCardExcluding(usedCards: readonly Card[], rng: () => number): Card 
  * harvestStreet(プレイ中、instance stateを直接読み書き)と、P7-6bのリファイン
  * (ハンド終了後、別providerで同じ処理を再実行)の両方から共用する(プランの
  * 「収穫ロジックの共通化」)。
+ *
+ * NF1: customHandReview.ts(カスタムハンド解析、非インタラクティブなバッチ処理)からも
+ * 再利用するためexportしている。ロジック自体は変更していない。
  */
-async function computeStreetHarvest(params: {
+export async function computeStreetHarvest(params: {
   provider: StreetNodeProvider
   actionLog: RecordedAction[]
   userDecisions: PendingUserDecision[]
