@@ -6,7 +6,8 @@ import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { computeSpotFeatures, HAND_CLASS_JA } from './features'
-import { buildReview } from '../trainer/reviewBuilder'
+import { computeSharedRunoutEquity } from './rangeEquity'
+import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
 import { createSpot, applyUserAction } from '../trainer/gameFlow'
 import { actionLabelsWithAmounts } from '../trainer/actionMath'
 import { decodeSolutionFile, type DecodedSolution } from '../loader/binaryFormat'
@@ -225,9 +226,9 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.blockers.continueCombosReducedPct!).toBeLessThanOrEqual(100)
     })
 
-    it('blockers.valueCombosReducedPctは0〜100の範囲、blockedExamplesは3件以下', () => {
-      const spot = buildFacingBetSpot()
-      const chosenLabel = 'call'
+    it('blockersは全ブロックハンドをクラス別に漏れなく集計し、重み降順で返す', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = spot.decodedNode.actionLabels[0]
       const grading = applyUserAction(spot, chosenLabel)
       const review = buildReview(spot, grading, chosenLabel)
       const features = computeSpotFeatures(review, 0)
@@ -235,6 +236,38 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.blockers.valueCombosReducedPct).toBeGreaterThanOrEqual(0)
       expect(features.blockers.valueCombosReducedPct).toBeLessThanOrEqual(100)
       expect(features.blockers.blockedExamples.length).toBeLessThanOrEqual(3)
+
+      const decision = review.decisions[0]
+      const rangeEq = computeSharedRunoutEquity({
+        heroCombos: decision.heroCombos,
+        heroWeights: decision.heroWeights,
+        villainCombos: decision.villainCombos,
+        villainWeights: decision.villainWeights,
+        board: decision.boardAtDecision,
+      })
+      const userKeys = new Set(review.userCombo.map(cardKey))
+      const expected = new Map<string, { comboCount: number; weight: number }>()
+      for (let i = 0; i < decision.villainCombos.length; i++) {
+        if (decision.villainWeights[i] <= 0 || Number.isNaN(rangeEq.villainEquity[i]) || rangeEq.villainEquity[i] < 0.66) continue
+        if (!decision.villainCombos[i].some((c) => userKeys.has(cardKey(c)))) continue
+        const hand = handStrFromCombo(decision.villainCombos[i])
+        const entry = expected.get(hand) ?? { comboCount: 0, weight: 0 }
+        entry.comboCount += 1
+        entry.weight += decision.villainWeights[i]
+        expected.set(hand, entry)
+      }
+
+      const actual = features.blockers.valueBlockedHands
+      expect(actual.length).toBe(expected.size)
+      expect(actual.length).toBeGreaterThan(3)
+      expect(new Set(actual.map((entry) => entry.hand)).size).toBe(actual.length)
+      expect(actual.reduce((sum, entry) => sum + entry.comboCount, 0)).toBe([...expected.values()].reduce((sum, entry) => sum + entry.comboCount, 0))
+      expect(actual.reduce((sum, entry) => sum + entry.weightPct, 0)).toBeCloseTo(100, 6)
+      for (let i = 0; i < actual.length; i++) {
+        const expectedEntry = expected.get(actual[i].hand)
+        expect(expectedEntry?.comboCount).toBe(actual[i].comboCount)
+        if (i > 0) expect(actual[i - 1].weightPct).toBeGreaterThanOrEqual(actual[i].weightPct)
+      }
     })
   })
 

@@ -49,6 +49,14 @@ export interface EquityBucket {
   villainPct: number
 }
 
+/** ブロックされた相手レンジを、RangeHeatGridと同じハンドクラス表記で集計した値。 */
+export interface BlockedHand {
+  hand: string
+  comboCount: number
+  /** ブロックされた重みの合計に対する、このハンドクラスの構成比(0-100)。 */
+  weightPct: number
+}
+
 export interface SpotFeatures {
   nodeContext: NodeContext
   handClass: HandStrength
@@ -65,6 +73,8 @@ export interface SpotFeatures {
     valueCombosReducedPct: number
     continueCombosReducedPct: number | null
     blockedExamples: string[]
+    valueBlockedHands: BlockedHand[]
+    continueBlockedHands: BlockedHand[] | null
   }
   mdf: number | null
   potOddsRequiredEq: number | null
@@ -185,11 +195,18 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): ActionRes
   })
 }
 
-function computeBlockedValuePct(villainCombos: readonly Combo[], weights: readonly number[], villainEquity: Float64Array, userCombo: Combo, threshold: number): { pct: number; blockedExamples: string[] } {
+function computeBlockedValuePct(
+  villainCombos: readonly Combo[],
+  weights: readonly number[],
+  villainEquity: Float64Array,
+  userCombo: Combo,
+  threshold: number,
+): { pct: number; blockedExamples: string[]; blockedHands: BlockedHand[] } {
   const userKeys = new Set(userCombo.map(cardKey))
   let total = 0
   let blocked = 0
   const examples: { combo: Combo; weight: number }[] = []
+  const byHand = new Map<string, { comboCount: number; weight: number }>()
   for (let i = 0; i < villainCombos.length; i++) {
     if (weights[i] <= 0 || Number.isNaN(villainEquity[i]) || villainEquity[i] < threshold) continue
     total += weights[i]
@@ -197,12 +214,21 @@ function computeBlockedValuePct(villainCombos: readonly Combo[], weights: readon
     if (collides) {
       blocked += weights[i]
       examples.push({ combo: villainCombos[i], weight: weights[i] })
+      const hand = handStrFromCombo(villainCombos[i])
+      const entry = byHand.get(hand) ?? { comboCount: 0, weight: 0 }
+      entry.comboCount += 1
+      entry.weight += weights[i]
+      byHand.set(hand, entry)
     }
   }
   examples.sort((a, b) => b.weight - a.weight)
+  const blockedHands = [...byHand.entries()]
+    .map(([hand, entry]) => ({ hand, comboCount: entry.comboCount, weightPct: blocked > 0 ? (entry.weight / blocked) * 100 : 0 }))
+    .sort((a, b) => b.weightPct - a.weightPct || a.hand.localeCompare(b.hand))
   return {
     pct: total > 0 ? (blocked / total) * 100 : 0,
     blockedExamples: examples.slice(0, 3).map((e) => handStrFromCombo(e.combo)),
+    blockedHands,
   }
 }
 
@@ -278,7 +304,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const nodeContext = computeNodeContext(decision)
 
-  const { pct: valueCombosReducedPct, blockedExamples } = computeBlockedValuePct(
+  const { pct: valueCombosReducedPct, blockedExamples, blockedHands: valueBlockedHands } = computeBlockedValuePct(
     decision.villainCombos,
     decision.villainWeights,
     rangeEq.villainEquity,
@@ -287,6 +313,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   )
 
   let continueCombosReducedPct: number | null = null
+  let continueBlockedHands: BlockedHand[] | null = null
   if (nodeContext.kind === 'facingBet') {
     const chosenResponse = responses.find((r) => r.forLabel === decision.chosenLabel)
     if (chosenResponse && !chosenResponse.terminal) {
@@ -300,7 +327,9 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
           nonFoldFreqPerCombo.push(1 - foldF)
         }
         const continueWeights = updateRangeWeights([...decision.villainWeights], nonFoldFreqPerCombo)
-        continueCombosReducedPct = computeBlockedValuePct(decision.villainCombos, continueWeights, rangeEq.villainEquity, userCombo, VALUE_EQUITY_THRESHOLD).pct
+        const continueBlockers = computeBlockedValuePct(decision.villainCombos, continueWeights, rangeEq.villainEquity, userCombo, VALUE_EQUITY_THRESHOLD)
+        continueCombosReducedPct = continueBlockers.pct
+        continueBlockedHands = continueBlockers.blockedHands
       }
     }
   }
@@ -327,7 +356,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     nutsAdvantage,
     equityBuckets,
     responses,
-    blockers: { valueCombosReducedPct, continueCombosReducedPct, blockedExamples },
+    blockers: { valueCombosReducedPct, continueCombosReducedPct, blockedExamples, valueBlockedHands, continueBlockedHands },
     mdf,
     potOddsRequiredEq,
     sprBucket,

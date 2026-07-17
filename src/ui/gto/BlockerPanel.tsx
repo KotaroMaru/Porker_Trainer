@@ -4,6 +4,7 @@
 import type { SpotFeatures } from '../../gto/explain/features'
 import type { Combo } from '../../analysis/range'
 import { cardLabel } from '../../engine/deck'
+import type { BlockedHand } from '../../gto/explain/features'
 
 interface Props {
   blockers: SpotFeatures['blockers']
@@ -23,11 +24,26 @@ export function BlockerPanel({ blockers, userCombo }: Props) {
           継続レンジ(fold以外)に対しては<strong style={{ color: 'var(--gold-light)' }}> {blockers.continueCombosReducedPct.toFixed(0)}% </strong>のブロック効果があります。
         </div>
       )}
-      {blockers.blockedExamples.length > 0 ? (
-        <div style={{ color: 'var(--text-muted)' }}>代表例: {blockers.blockedExamples.join(', ')}</div>
-      ) : (
-        <div style={{ color: 'var(--text-dim)' }}>ブロックしている代表的なコンボはありません。</div>
-      )}
+      <BlockedHandList label="バリューハンド" hands={blockers.valueBlockedHands} />
+      {blockers.continueBlockedHands !== null && <BlockedHandList label="継続レンジ" hands={blockers.continueBlockedHands} />}
+    </div>
+  )
+}
+
+function BlockedHandList({ label, hands }: { label: string; hands: readonly BlockedHand[] }) {
+  if (hands.length === 0) return <div style={{ color: 'var(--text-dim)' }}>{label}にブロックしているハンドはありません。</div>
+
+  return (
+    <div>
+      <div style={{ color: 'var(--text-muted)', marginBottom: 3 }}>{label}のブロック対象（全{hands.length}クラス）</div>
+      <div style={{ maxHeight: 144, overflowY: 'auto', border: '1px solid var(--panel-border)', borderRadius: 4, padding: '3px 6px' }}>
+        {hands.map(({ hand, comboCount, weightPct }) => (
+          <div key={hand} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, lineHeight: '20px' }}>
+            <span>{hand} <span style={{ color: 'var(--text-dim)' }}>({comboCount}コンボ)</span></span>
+            <span style={{ color: 'var(--gold-light)' }}>{weightPct.toFixed(1)}%</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
