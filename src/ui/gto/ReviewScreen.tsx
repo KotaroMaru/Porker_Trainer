@@ -25,8 +25,14 @@ function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
 }
 
 export function ReviewScreen() {
-  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand } =
+  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand, dailyChallenge } =
     useGtoStore()
+  // P11 Phase C: デイリーチャレンジのレビュー中(phase:'reviewing')は、DailyChallengeScreen側が
+  // 「次のハンドへ」/「結果を見る」ボタン(dismissDailyReview()経由)を別途表示する。この
+  // 「次のハンド」ボタンをそのまま出すと、nextSpot()(通常プレイの新規スポット開始)が
+  // デイリーの状態を無視して呼ばれてしまい、2つの紛らわしい「次へ」ボタンが並んでしまうため、
+  // デイリーのレビュー中はこのボタンを非表示にする。
+  const isDailyReviewing = dailyChallenge?.phase === 'reviewing'
   const [copied, setCopied] = useState(false)
   const [saveState, setSaveState] = useState<'idle' | 'saved' | 'error'>('idle')
 
@@ -278,7 +284,7 @@ export function ReviewScreen() {
             >
               一覧へ戻る
             </button>
-          ) : (
+          ) : isDailyReviewing ? null : (
             <button
               onClick={() => void nextSpot()}
               style={{ flex: 2, padding: 10, fontWeight: 600, background: 'var(--green-mid)', border: '1px solid var(--green-light)', borderRadius: 8, color: 'var(--gold-light)' }}
