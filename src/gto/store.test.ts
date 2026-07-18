@@ -25,6 +25,7 @@ import { FLOPS } from './data/flops'
 import { loadDailyResults } from './dailyChallenge/storage'
 import { computeCustomHandReview } from './trainer/customHandReview'
 import type { ReviewData } from './trainer/reviewBuilder'
+import { initialDivergenceTally } from './stats/divergence'
 
 vi.mock('./trainer/customHandReview', () => ({ computeCustomHandReview: vi.fn() }))
 
@@ -78,6 +79,9 @@ beforeEach(() => {
     reviewFeatures: [],
     reviewFeaturesStatus: 'idle',
     activeDecisionIdx: 0,
+    // P11 Phase D-3: divergenceTallyはモジュールロード時に1回だけloadDivergenceTally()
+    // されるsingletonなstate(dailyRank同様)なので、テスト間の汚染を防ぐため明示的にリセットする。
+    divergenceTally: initialDivergenceTally(),
   })
 })
 
@@ -165,6 +169,52 @@ describe('useGtoStore', () => {
     expect(state.sessionTally.totalEvLossBb).toBeGreaterThanOrEqual(0)
   })
 
+  it('P11 D-3: 通常の単発プレイを数問行うとdivergenceTally.decisionCountが積み上がる', async () => {
+    for (let i = 0; i < 3; i++) {
+      await useGtoStore.getState().startNewSpot()
+      const spot = useGtoStore.getState().spot
+      if (!spot) throw new Error('spot should be set')
+      useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+    }
+    expect(useGtoStore.getState().divergenceTally.decisionCount).toBe(3)
+  })
+
+  it('P11 D-3: カスタム解析(submitCustomHand)を実行してもdivergenceTallyは変化しない(除外対象)', async () => {
+    const review = { decisions: [] } as unknown as ReviewData
+    vi.mocked(computeCustomHandReview).mockResolvedValueOnce(review)
+    __setProviderFactoryForTests(() => createInProcessProviderFactory({ maxIterations: 1, targetExploitability: 1 }))
+    useGtoStore.setState({ availability: new Map() })
+    await useGtoStore.getState().startCustomAnalysis()
+    useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0] })
+    useGtoStore.getState().updateCustomAnalysis({ flop: FLOPS[0], userSeat: 0, userCombo: [{ rank: 2, suit: 'c' }, { rank: 3, suit: 'd' }] })
+
+    const before = useGtoStore.getState().divergenceTally
+    await useGtoStore.getState().submitCustomHand()
+    expect(useGtoStore.getState().reviewSource).toBe('custom')
+    expect(useGtoStore.getState().divergenceTally).toBe(before) // 参照も不変(積み上げ処理自体が呼ばれていない)
+    __resetProviderFactoryForTests()
+  })
+
+  it('P11 D-3: resetDivergenceStatsでdivergenceTallyが初期値に戻り、localStorageからも削除される', async () => {
+    const originalLocalStorage = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+    try {
+      await useGtoStore.getState().startNewSpot()
+      const spot = useGtoStore.getState().spot
+      if (!spot) throw new Error('spot should be set')
+      useGtoStore.getState().chooseAction(spot.decodedNode.actionLabels[0])
+      expect(useGtoStore.getState().divergenceTally.decisionCount).toBe(1)
+      expect(globalThis.localStorage.getItem('poker_trainer_gto_divergence')).not.toBeNull()
+
+      useGtoStore.getState().resetDivergenceStats()
+
+      expect(useGtoStore.getState().divergenceTally).toEqual({ decisionCount: 0, userCount: { fold: 0, passive: 0, aggressive: 0 }, gtoFreqSum: { fold: 0, passive: 0, aggressive: 0 } })
+      expect(globalThis.localStorage.getItem('poker_trainer_gto_divergence')).toBeNull()
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+    }
+  })
+
   it('デイリーチャレンジ(単発)は10問を集計し、各問のあとレビューを挟んでから同日再開始を防止する', async () => {
     const originalLocalStorage = globalThis.localStorage
     Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
@@ -191,6 +241,8 @@ describe('useGtoStore', () => {
       expect(completed?.phase).toBe('done')
       expect(completed?.results).toHaveLength(10)
       expect(Object.values(loadDailyResults())).toHaveLength(1)
+      // P11 D-3: デイリー単発チャレンジ(実プレイ)も10問ぶんdivergenceTallyへ積み上がる。
+      expect(useGtoStore.getState().divergenceTally.decisionCount).toBe(10)
       const rating = useGtoStore.getState().dailyRank
       await useGtoStore.getState().startDailyChallenge('single')
       expect(useGtoStore.getState().dailyChallenge?.phase).toBe('done')
@@ -461,6 +513,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       reviewFeatures: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
+      divergenceTally: initialDivergenceTally(),
     })
   })
 
@@ -484,6 +537,21 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       const fresh = beforeFullHand === undefined || s.fullHand !== beforeFullHand
       if (statusOk && fresh) return
       if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for store pause (status=${s.status})`)
+      await new Promise((r) => setTimeout(r, 20))
+    }
+  }
+
+  /** waitForStorePauseのデイリー通し版。デイリー通しはhandOverを経由せず、phase='over'到達時に
+   *  advanceDailyChallenge内のonUpdateが直接status:'graded'へ遷移させる(P11 Phase C)ため、
+   *  待ち受ける停止集合が異なる。 */
+  async function waitForDailyPause(beforeFullHand?: FullHandSnapshot | null, timeoutMs = 30000): Promise<void> {
+    const start = Date.now()
+    for (;;) {
+      const s = useGtoStore.getState()
+      const statusOk = ['userTurn', 'graded', 'error'].includes(s.status)
+      const fresh = beforeFullHand === undefined || s.fullHand !== beforeFullHand
+      if (statusOk && fresh) return
+      if (Date.now() - start > timeoutMs) throw new Error(`timed out waiting for daily pause (status=${s.status})`)
       await new Promise((r) => setTimeout(r, 20))
     }
   }
@@ -573,7 +641,53 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     expect(state.reviewFeatures.length).toBe(state.review!.decisions.length)
     expect(state.sessionTally.hands).toBe(1)
     expect(state.sessionTally.decisions).toBe(state.review!.decisions.length)
+    // P11 D-3: 通常の通しプレイ(実プレイ)も、ハンド中の全決断がdivergenceTallyへ積み上がる。
+    expect(state.divergenceTally.decisionCount).toBe(state.review!.decisions.length)
   }, 120_000) // P9-4でターン到達時に同期的な背景リファイン(300反復)が実行されるため余裕を確保する
+
+  it('P11 D-3: デイリーチャレンジ(通し)のプレイでもdivergenceTallyが積み上がる', async () => {
+    const originalLocalStorage = globalThis.localStorage
+    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+    // P9-4のターンprovider背景リファイン(REFINE_SOLVE=300反復)はinProcessファクトリでは
+    // 完全に同期実行され、既定の重い反復数のままだと実測で数十秒〜(CPU競合下ではさらに)
+    // かかりテストが極端に遅くなる(P7-6b等の既存テストが同じ問題をrefineラップで回避
+    // している前例と同一原因)。ここではdivergenceTallyの積算件数のみを検証すればよく
+    // refineの精度自体は検証対象外なので、反復数を絞って高速化する。
+    __setProviderFactoryForTests(() => {
+      const inner = createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 })
+      const wrapped: NodeProviderFactory = {
+        forFlop: (s, b) => inner.forFlop(s, b),
+        forLiveStreet: (input) => {
+          const real = inner.forLiveStreet(input)
+          return { ...real, refine: (opts) => real.refine({ ...opts, maxIterations: 5, targetExploitability: 1, chunkIterations: 5 }) }
+        },
+        dispose: () => inner.dispose(),
+      }
+      return wrapped
+    })
+    try {
+      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: SCENARIOS.map((s) => s.id) }, availability: null })
+      const beforeStart = useGtoStore.getState().fullHand
+      await useGtoStore.getState().startDailyChallenge('full')
+      await waitForDailyPause(beforeStart)
+      let guard = 0
+      while (useGtoStore.getState().status === 'userTurn') {
+        guard++
+        if (guard > 15) throw new Error('too many user decisions, possible infinite loop')
+        const snap = useGtoStore.getState().fullHand!
+        const label = snap.actionsWithAmounts.find((a) => a.label === 'check')?.label ?? snap.actionsWithAmounts[0].label
+        useGtoStore.getState().chooseAction(label)
+        await waitForDailyPause(snap)
+      }
+      expect(useGtoStore.getState().status).toBe('graded')
+      expect(useGtoStore.getState().dailyChallenge?.phase).toBe('reviewing')
+      const decisionsInHand = useGtoStore.getState().review!.decisions.length
+      expect(useGtoStore.getState().divergenceTally.decisionCount).toBe(decisionsInHand)
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+      __setProviderFactoryForTests(() => createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 }))
+    }
+  }, 30_000)
 
   it('P7-6b: レビュー閲覧中(status=graded)にターンのバックグラウンドリファインが完了しても、statusがhandOverへ引き戻されずreview/featuresだけが差し替わる', async () => {
     // in-processファクトリは同期的に解くため、通常はreviewを開く前にリファインまで

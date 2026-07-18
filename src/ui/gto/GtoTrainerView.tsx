@@ -4,6 +4,7 @@ import { SettingsScreen } from './SettingsScreen'
 import { BookmarksScreen } from './BookmarksScreen'
 import { AnalyzerScreen } from './AnalyzerScreen'
 import { DailyChallengeScreen } from './DailyChallengeScreen'
+import { DivergenceScreen } from './DivergenceScreen'
 
 // P4 Step D: サブ画面切替(QuizViewパターン)。
 // P4は'play'のみ実装。P6 Step B9でsettingsを実装、B10でbookmarksを実装。
@@ -16,6 +17,7 @@ const MODE_LABELS: Record<GtoTab, string> = {
   bookmarks: '保存済み',
   settings: '設定',
   daily: 'デイリー',
+  divergence: 'ズレ分析',
 }
 
 export function GtoTrainerView() {
@@ -26,7 +28,7 @@ export function GtoTrainerView() {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 style={{ color: 'var(--gold)', fontSize: 18, flexShrink: 0 }}>GTO練習</h2>
         <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 1, paddingBottom: 2 }}>
-          {(['play', 'daily', 'review', 'bookmarks', 'settings'] as GtoTab[]).map((m) => (
+          {(['play', 'daily', 'review', 'bookmarks', 'divergence', 'settings'] as GtoTab[]).map((m) => (
             <button
               key={m}
               onClick={() => setActiveTab(m)}
@@ -51,6 +53,7 @@ export function GtoTrainerView() {
       {activeTab === 'bookmarks' && <BookmarksScreen />}
       {activeTab === 'review' && <AnalyzerScreen />}
       {activeTab === 'daily' && <DailyChallengeScreen />}
+      {activeTab === 'divergence' && <DivergenceScreen />}
     </div>
   )
 }

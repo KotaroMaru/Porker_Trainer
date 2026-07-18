@@ -39,6 +39,8 @@ import type { Combo } from '../analysis/range'
 import { computeCustomHandReview, type CustomHandInput, type CustomStreetAction } from './trainer/customHandReview'
 import { DAILY_HAND_COUNT, aggregateDailyAnswer, applyDailyResultToRank, computeDailyScore, dailyDateKey, pickDailySpotSeeds, type DailyAnswer } from './dailyChallenge/dailyChallenge'
 import { loadDailyRank, loadDailyResults, saveDailyRank, saveDailyResult } from './dailyChallenge/storage'
+import { accumulateDivergence, initialDivergenceTally, type DivergenceTally } from './stats/divergence'
+import { loadDivergenceTally, saveDivergenceTally, resetDivergenceTally } from './stats/storage'
 
 /** availability未ロード・生成済みシナリオが1つも無い場合の最終フォールバック。 */
 const FALLBACK_SCENARIO_ID = 'srp_btn_vs_bb'
@@ -66,7 +68,7 @@ export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | '
 export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
 /** GtoTrainerViewのサブ画面タブ。P6 B10からstoreへ引き上げた(openBookmark/closeBookmarkが
  *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。 */
-export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings' | 'daily'
+export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings' | 'daily' | 'divergence'
 /** 表示中のreviewの由来。'bookmark'ならReviewScreenの「次のハンド」を「一覧へ戻る」に差し替える。 */
 export type ReviewSource = 'live' | 'bookmark' | 'custom'
 
@@ -160,6 +162,12 @@ export interface GtoState {
   errorMessage: string | null
   sessionTally: SessionTally
 
+  /** P11 Phase D-3: 実プレイ全体(単発・通し・デイリー、custom/bookmark除く)を横断して
+   *  積み上げるGTOズレ集計。単一のtallyとして扱う(デイリー用に分けない)。 */
+  divergenceTally: DivergenceTally
+  /** divergenceTallyを初期値へ戻し、永続化層(localStorage)からも削除する。 */
+  resetDivergenceStats: () => void
+
   settings: GtoSettings
   setMode: (mode: GtoMode) => void
   setScenarioEnabled: (id: string, enabled: boolean) => void
@@ -225,13 +233,33 @@ export interface GtoState {
   nextSpot: () => Promise<void>
 }
 
-export const useGtoStore = create<GtoState>((set, get) => ({
+export const useGtoStore = create<GtoState>((set, get) => {
+  // P11 Phase D-3: 1件の確定済み決断(GradeResult.actionBreakdown+選択ラベル)を
+  // divergenceTallyへ積み上げ、永続化する共通ヘルパー。ReviewDecision(grading/
+  // chosenLabelを持つ)をそのまま渡せるよう、構造的部分型で受け取る(単発は1件配列、
+  // 通し/デイリー通しはreview.decisionsをそのまま渡す)。
+  const recordDivergenceDecisions = (decisions: readonly { grading: GradeResult; chosenLabel: string }[]): void => {
+    let next = get().divergenceTally
+    for (const d of decisions) {
+      next = accumulateDivergence(next, d.grading.actionBreakdown, d.chosenLabel)
+    }
+    saveDivergenceTally(next)
+    set({ divergenceTally: next })
+  }
+
+  return {
   status: 'idle',
   spot: null,
   grading: null,
   chosenLabel: null,
   errorMessage: null,
   sessionTally: initialTally(),
+
+  divergenceTally: loadDivergenceTally(),
+  resetDivergenceStats: () => {
+    resetDivergenceTally()
+    set({ divergenceTally: initialDivergenceTally() })
+  },
 
   activeTab: 'play',
   setActiveTab: (tab: GtoTab) => set({ activeTab: tab }),
@@ -320,6 +348,9 @@ export const useGtoStore = create<GtoState>((set, get) => ({
                 return
               }
               const review = controller.getReview()
+              // P11 Phase D-3: デイリーチャレンジの通しプレイも実プレイなので、
+              // ハンド中の全決断をGTOズレ集計へ積む(単発デイリー・通常通しと同じtally)。
+              recordDivergenceDecisions(review.decisions)
               const answer = aggregateDailyAnswer(review.decisions)
               const results = [...dc.results, answer]
               const handIndex = dc.handIndex + 1
@@ -641,6 +672,10 @@ export const useGtoStore = create<GtoState>((set, get) => ({
     if (!spot) return
     const grading = applyUserAction(spot, label)
     const review = buildReview(spot, grading, label)
+    // P11 Phase D-3: ここに到達するのは通常の単発プレイ、またはデイリーチャレンジの
+    // 単発プレイ(dailyChallenge.mode==='full'は上で既にreturn済み)のみで、
+    // どちらも実プレイなのでGTOズレ集計へ積む(custom/bookmarkはこの関数を経由しない)。
+    recordDivergenceDecisions([{ grading, chosenLabel: label }])
     const nextTally: SessionTally = {
       ...sessionTally,
       spots: sessionTally.spots + 1,
@@ -715,6 +750,8 @@ export const useGtoStore = create<GtoState>((set, get) => ({
       totalEvLossBb: sessionTally.totalEvLossBb + review.decisions.reduce((sum, d) => sum + Math.max(0, d.grading.evLossBb), 0),
       totalNetBb: sessionTally.totalNetBb + result.userNetBb,
     }
+    // P11 Phase D-3: 通常の通しプレイ(実プレイ)なので、ハンド中の全決断をGTOズレ集計へ積む。
+    recordDivergenceDecisions(review.decisions)
     set({
       status: 'graded',
       sessionTally: nextTally,
@@ -730,4 +767,5 @@ export const useGtoStore = create<GtoState>((set, get) => ({
   nextSpot: async () => {
     await get().startNewSpot()
   },
-}))
+  }
+})
