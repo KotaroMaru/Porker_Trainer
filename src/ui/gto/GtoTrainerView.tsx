@@ -25,9 +25,12 @@ export function GtoTrainerView() {
 
   return (
     <div style={{ padding: 16, maxWidth: 1100, margin: '0 auto', width: '100%' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
         <h2 style={{ color: 'var(--gold)', fontSize: 18, flexShrink: 0 }}>GTO練習</h2>
-        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', flexShrink: 1, paddingBottom: 2 }}>
+        {/* P12 Phase A-1: whiteSpace/flexShrinkが無いとボタンが潰れて文字単位で折り返される
+         *  (モバイルで縦書きに見えるバグの原因)。overflowXを機能させるにはこの親にminWidth:0も必要
+         *  (flexアイテムの既定min-widthはcontentのため、無いと親自体が広がり横スクロールが起きない)。 */}
+        <div style={{ display: 'flex', gap: 6, overflowX: 'auto', minWidth: 0, paddingBottom: 2 }}>
           {(['play', 'daily', 'review', 'bookmarks', 'divergence', 'settings'] as GtoTab[]).map((m) => (
             <button
               key={m}
@@ -40,6 +43,8 @@ export function GtoTrainerView() {
                 fontWeight: activeTab === m ? 600 : 400,
                 border: '1px solid ' + (activeTab === m ? 'var(--green-light)' : 'var(--panel-border)'),
                 borderRadius: 6,
+                whiteSpace: 'nowrap',
+                flexShrink: 0,
               }}
             >
               {MODE_LABELS[m]}
