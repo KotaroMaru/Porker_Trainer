@@ -81,6 +81,11 @@ export function makeTierQuestion(): TierQuestion {
   return { hand, correct: getYokosawaTier(hand.handStr) }
 }
 
+/** 問題の同一性キー(wrongリストの重複防止・除外に使用)。 */
+export function tierKey(q: TierQuestion): string {
+  return q.hand.handStr
+}
+
 // ---------------- モード③: リレイズ判定(実践形式) ----------------
 export interface ReraiseQuestion {
   position: Position       // 自分のポジション

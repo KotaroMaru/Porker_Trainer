@@ -5,17 +5,14 @@ import { YokosawaRangeGrid } from '../YokosawaRangeGrid'
 import { CheckIcon, CrossIcon } from '../icons'
 import { TIER_INFO, TIER_DISPLAY_ORDER } from '../../advisor/yokosawa'
 import type { YokosawaTier } from '../../advisor/yokosawa'
-import { makeTierQuestion } from '../../advisor/quiz'
+import { makeTierQuestion, tierKey } from '../../advisor/quiz'
 import type { TierQuestion, RandomHand } from '../../advisor/quiz'
 
 // P12 Phase A-2: QuizView.tsx(旧アプリ「一問一答」)にあった「②ヨコサワ色当て」モードを、
 // 新GTOアプリの「学習」タブからも同じ実装で使えるよう共有モジュールへ抽出した。
 // 挙動・見た目は移設元から不変(ロジック自体はadvisor/quiz.ts・advisor/yokosawa.tsのまま無変更)。
-
-/** 問題の同一性キー(wrongリストの重複防止・除外に使用)。 */
-export function tierKey(q: TierQuestion): string {
-  return q.hand.handStr
-}
+// tierKeyはreact-refresh/only-export-components対応のためadvisor/quiz.tsへ配置してある
+// (このファイルはコンポーネントのみexportする)。
 
 export function ReviewComplete() {
   return (

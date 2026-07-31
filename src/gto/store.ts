@@ -77,6 +77,15 @@ export type ReviewSource = 'live' | 'bookmark' | 'custom'
 
 export interface CustomAnalyzerState {
   scenario: Scenario | null
+  /**
+   * P12 Phase C: ユーザーが自由に選んだ生のフロップ3枚(ピッカー途中はnullを含み得る)。
+   * 入力中(手札・ターン・リバー・各ストリートのアクション)はこちらを「盤面」として使う
+   * (収録済みフロップかどうかは解析実行(submit)時までチェックしない、という
+   * タスクパケットの方針)。
+   */
+  flopCards: [Card | null, Card | null, Card | null]
+  /** 解析実行時に確定した、実際にソルブ済みデータへ解決されたフロップ(P12以前と同じ意味・
+   *  用途のまま)。flopCardsが収録済みと厳密一致 or スート読み替えで確定した時だけ入る。 */
   flop: FlopDef | null
   userSeat: Seat | null
   /** ピッカー途中はnullを含み得る。submit時だけ完全なComboへ絞り込む。 */
@@ -89,7 +98,7 @@ export interface CustomAnalyzerState {
 }
 
 function initialCustomAnalyzer(): CustomAnalyzerState {
-  return { scenario: null, flop: null, userSeat: null, userCombo: null, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] }, phase: 'input', error: null }
+  return { scenario: null, flopCards: [null, null, null], flop: null, userSeat: null, userCombo: null, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] }, phase: 'input', error: null }
 }
 
 /**
@@ -219,6 +228,9 @@ export interface GtoState {
   startCustomAnalysis: () => Promise<void>
   updateCustomAnalysis: (update: Partial<Omit<CustomAnalyzerState, 'streetActions' | 'phase' | 'error'>>) => void
   addCustomAction: (street: 'flop' | 'turn' | 'river', action: CustomStreetAction) => void
+  /** P12 Phase C: ステップ式ウィザードの「戻る」。直近に入力済みの1項目(直近ストリートの
+   *  アクション→カード→…の順)を取り消して1ステップ前の状態へ戻す。 */
+  goBackCustomStep: () => void
   submitCustomHand: () => Promise<void>
   closeCustomAnalysis: () => void
 
@@ -503,14 +515,29 @@ export const useGtoStore = create<GtoState>((set, get) => {
     set((state) => {
       if (!state.customAnalyzer) return {}
       const changingScenario = update.scenario !== undefined && update.scenario !== state.customAnalyzer.scenario
+      // P12 Phase C: 盤面(flopCards)はsubmit時まで収録判定しないため、盤面変更の
+      // トリガーはflopではなくflopCardsにした(flopは解析実行時に一度だけ解決して
+      // 追加設定される値になったため、flop単独の更新は後続を巻き戻さない)。
+      const changingFlopCards = update.flopCards !== undefined
       return {
         customAnalyzer: {
           ...state.customAnalyzer,
-          ...update,
-          // シナリオ/フロップ変更後に古いアクション列や後続カードを残さない。
-          ...(changingScenario || update.flop !== undefined
-            ? { flop: changingScenario ? null : update.flop ?? state.customAnalyzer.flop, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] } }
+          // シナリオ/盤面変更後に古いアクション列・後続カード・確定済みflopを残さない
+          // (デフォルト値としてまず適用し、直後の...updateで「同じ呼び出しで明示的に
+          // 指定された値」が優先されるようにする。例: PositionRingPickerのonComplete/
+          // このファイルのテストがscenarioとflopCards/userComboを同時に1回のupdateで
+          // 渡すケースで、指定した値がリセットで巻き戻されないようにするため)。
+          ...(changingScenario || changingFlopCards
+            ? {
+                flopCards: changingScenario ? [null, null, null] : state.customAnalyzer.flopCards,
+                flop: null,
+                userCombo: changingScenario ? null : state.customAnalyzer.userCombo,
+                turnCard: null,
+                riverCard: null,
+                streetActions: { flop: [], turn: [], river: [] },
+              }
             : {}),
+          ...update,
           phase: 'input',
           error: null,
         },
@@ -524,6 +551,21 @@ export const useGtoStore = create<GtoState>((set, get) => {
       return { customAnalyzer: { ...state.customAnalyzer, streetActions: { ...actions, [street]: [...actions[street], action] }, error: null } }
     })
   },
+  goBackCustomStep: () => {
+    set((state) => {
+      const a = state.customAnalyzer
+      if (!a) return {}
+      if (a.streetActions.river.length > 0) return { customAnalyzer: { ...a, streetActions: { ...a.streetActions, river: [] }, phase: 'input', error: null } }
+      if (a.riverCard) return { customAnalyzer: { ...a, riverCard: null, phase: 'input', error: null } }
+      if (a.streetActions.turn.length > 0) return { customAnalyzer: { ...a, streetActions: { ...a.streetActions, turn: [] }, phase: 'input', error: null } }
+      if (a.turnCard) return { customAnalyzer: { ...a, turnCard: null, phase: 'input', error: null } }
+      if (a.streetActions.flop.length > 0) return { customAnalyzer: { ...a, streetActions: { ...a.streetActions, flop: [] }, phase: 'input', error: null } }
+      if (a.userCombo && (a.userCombo[0] || a.userCombo[1])) return { customAnalyzer: { ...a, userCombo: null, phase: 'input', error: null } }
+      if (a.flopCards.some((c) => c !== null)) return { customAnalyzer: { ...a, flopCards: [null, null, null], flop: null, phase: 'input', error: null } }
+      if (a.scenario) return { customAnalyzer: { ...a, scenario: null, userSeat: null, flopCards: [null, null, null], flop: null, phase: 'input', error: null } }
+      return {}
+    })
+  },
   submitCustomHand: async () => {
     const analyzer = get().customAnalyzer
     if (!analyzer || !analyzer.scenario || !analyzer.flop || analyzer.userSeat === null || !analyzer.userCombo || !analyzer.userCombo[0] || !analyzer.userCombo[1]) return
@@ -534,7 +576,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
     set({ customAnalyzer: { ...analyzer, phase: 'solving', error: null } })
     try {
       const review = await computeCustomHandReview(input, providerFactoryCreator())
-      set({ status: 'graded', review, reviewSource: 'custom', reviewFeatures: new Array(review.decisions.length).fill(null), reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: { ...input, phase: 'input', error: null } })
+      set({ status: 'graded', review, reviewSource: 'custom', reviewFeatures: new Array(review.decisions.length).fill(null), reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: { ...analyzer, ...input, phase: 'input', error: null } })
       get().ensureFeatures(0)
     } catch (e) {
       set((state) => ({ customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'error', error: describeCustomHandError(e) } : state.customAnalyzer }))

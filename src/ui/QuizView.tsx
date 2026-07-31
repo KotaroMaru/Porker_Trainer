@@ -8,7 +8,7 @@ import { POSITION_INFO } from './glossary'
 import { YOKOSAWA_ACTION_JA } from '../advisor/yokosawa'
 import type { YokosawaAction } from '../advisor/yokosawa'
 import {
-  makePreflopQuestion, makeReraiseQuestion, makeRangePredictionQuestion,
+  makePreflopQuestion, makeReraiseQuestion, makeRangePredictionQuestion, tierKey,
 } from '../advisor/quiz'
 import type {
   PreflopQuestion, TierQuestion, ReraiseQuestion, PreflopAnswer,
@@ -16,7 +16,7 @@ import type {
 } from '../advisor/quiz'
 // P12 Phase A-2: 「②ヨコサワ色当て」モードは新GTOアプリの「学習」タブと共有するため
 // src/ui/quiz/TierQuiz.tsx へ抽出した(挙動不変)。他モードが使う共通小部品もそこからimportする。
-import { TierQuiz, tierKey, ReviewComplete, ScoreBar, HandCards, ResultBanner, NextButton } from './quiz/TierQuiz'
+import { TierQuiz, ReviewComplete, ScoreBar, HandCards, ResultBanner, NextButton } from './quiz/TierQuiz'
 
 type QuizMode = 'preflop' | 'tier' | 'reraise' | 'range'
 

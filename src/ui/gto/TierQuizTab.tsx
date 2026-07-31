@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { TierQuiz, tierKey } from '../quiz/TierQuiz'
+import { TierQuiz } from '../quiz/TierQuiz'
+import { tierKey } from '../../advisor/quiz'
 import type { TierQuestion } from '../../advisor/quiz'
 
 // P12 Phase A-3: 新GTOアプリの「学習」タブ内「色当てクイズ」サブタブ。
