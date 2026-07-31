@@ -25,7 +25,7 @@ function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
 }
 
 export function ReviewScreen() {
-  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand, dailyChallenge } =
+  const { review, reviewSource, reviewFeatures, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand, dailyChallenge, customAnalyzer } =
     useGtoStore()
   // P11 Phase C: デイリーチャレンジのレビュー中(phase:'reviewing')は、DailyChallengeScreen側が
   // 「次のハンドへ」/「結果を見る」ボタン(dismissDailyReview()経由)を別途表示する。この
@@ -99,6 +99,24 @@ export function ReviewScreen() {
           </button>
         ))}
       </div>
+
+      {/* P12 Phase D: スート読み替えを確定して解析した場合の案内バッジ。カスタム解析
+          (reviewSource==='custom')でのみ意味を持つ値なので、それ以外では出さない。 */}
+      {reviewSource === 'custom' && customAnalyzer?.suitRemapNotice && (
+        <div
+          role="status"
+          style={{
+            fontSize: 12.5,
+            color: 'var(--gold-light)',
+            background: 'rgba(200,168,75,0.12)',
+            border: '1px solid var(--panel-border)',
+            borderRadius: 8,
+            padding: '8px 12px',
+          }}
+        >
+          {customAnalyzer.suitRemapNotice}
+        </div>
+      )}
 
       {/* P9-5: 精密化中もレビューを閉じずに閲覧でき、完了時にverdict/EVロスが更新されうる。
           reviewSource==='live'(このハンド自身)の場合のみ表示する。 */}

@@ -95,10 +95,13 @@ export interface CustomAnalyzerState {
   streetActions: { flop: CustomStreetAction[]; turn: CustomStreetAction[]; river: CustomStreetAction[] }
   phase: 'input' | 'solving' | 'error'
   error: string | null
+  /** P12 Phase D: スート読み替えを確定して解析した場合の案内文(元の入力を含む)。
+   *  ReviewScreenが reviewSource==='custom' の時にバッジとして表示する。 */
+  suitRemapNotice: string | null
 }
 
 function initialCustomAnalyzer(): CustomAnalyzerState {
-  return { scenario: null, flopCards: [null, null, null], flop: null, userSeat: null, userCombo: null, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] }, phase: 'input', error: null }
+  return { scenario: null, flopCards: [null, null, null], flop: null, userSeat: null, userCombo: null, turnCard: null, riverCard: null, streetActions: { flop: [], turn: [], river: [] }, phase: 'input', error: null, suitRemapNotice: null }
 }
 
 /**
@@ -535,6 +538,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
                 turnCard: null,
                 riverCard: null,
                 streetActions: { flop: [], turn: [], river: [] },
+                suitRemapNotice: null,
               }
             : {}),
           ...update,

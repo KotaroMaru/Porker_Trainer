@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
-import { cardKey } from '../../engine/deck'
+import { useState, useEffect } from 'react'
+import { cardKey, cardLabel } from '../../engine/deck'
 import type { Card, Suit } from '../../engine/types'
 import { isOopPosition } from '../../gto/data/scenarios'
 import { useGtoStore } from '../../gto/store'
@@ -7,7 +7,8 @@ import { buildStreetTree, buildTurnSubgameTree } from '../../gto/tree/actionTree
 import type { DecisionNode, PlayerIdx, TreeNode } from '../../gto/solver/cfr'
 import { actionLabelsWithAmounts } from '../../gto/trainer/actionMath'
 import type { Seat } from '../../gto/trainer/gameFlow'
-import { findIsomorphicStoredFlop } from '../../gto/flopIso'
+import { findIsomorphicStoredFlop, applySuitMap } from '../../gto/flopIso'
+import { buildCustomHandPrompt } from '../../gto/customHandPrompt'
 import { STREET_LABEL_JA, actionLabelJa } from './labels'
 import { CardPicker } from './CardPicker'
 import { PokerTableView } from './PokerTableView'
@@ -89,6 +90,7 @@ const ALL_SUITS: readonly Suit[] = ['c', 'd', 'h', 's']
 
 export function AnalyzerScreen() {
   const { review, reviewSource, customAnalyzer, startCustomAnalysis, updateCustomAnalysis, addCustomAction, goBackCustomStep, submitCustomHand, closeCustomAnalysis } = useGtoStore()
+  const [copied, setCopied] = useState(false)
   useEffect(() => {
     if (!customAnalyzer) void startCustomAnalysis()
   }, [customAnalyzer, startCustomAnalysis])
@@ -201,16 +203,77 @@ export function AnalyzerScreen() {
     updateCustomAnalysis({ flopCards: next })
   }
 
-  // P12 Phase D未実装分: 収録済みフロップと厳密一致(=写像が恒等写像)の場合のみ、その場で
-  // 解決してsubmitCustomHandを呼ぶ。スート読み替えが必要な場合・収録データが全く無い場合の
-  // 確認UI/AI相談コピーはPhase Dで追加する(ここでは送信をブロックし理由を案内するのみ)。
+  // P12 Phase D: 解析実行時の3分岐。
+  // 1. flopMatchが恒等写像(=入力がそのまま収録済み) → 即解析。
+  // 2. flopMatchがあるが恒等写像でない(=スート違いの近い盤面がある) → 読み替え確認を提示。
+  // 3. flopMatchが無い(同型クラスも未収録) → AI相談用コピーのみ提示。
   const flopMatch = step === 'ready' && flopCardsFilled ? findIsomorphicStoredFlop(flopCardsArr) : null
   const flopMatchIsIdentity = flopMatch ? ALL_SUITS.every((s) => flopMatch.suitMap[s] === s) : false
+  const remappedPreview =
+    flopMatch && !flopMatchIsIdentity && userCombo?.[0] && userCombo?.[1]
+      ? {
+          flop: applySuitMap(flopCardsArr, flopMatch.suitMap),
+          combo: applySuitMap([userCombo[0], userCombo[1]], flopMatch.suitMap) as [Card, Card],
+          turn: turnCard ? applySuitMap([turnCard], flopMatch.suitMap)[0] : null,
+          river: riverCard ? applySuitMap([riverCard], flopMatch.suitMap)[0] : null,
+        }
+      : null
 
   async function handleSubmit() {
     if (!flopMatch || !flopMatchIsIdentity) return
     updateCustomAnalysis({ flop: flopMatch.flop })
     await submitCustomHand()
+  }
+
+  /** 選択肢1: スート違いの近い収録データへ読み替えて解析する(手札・ターン・リバーにも
+   *  同じ写像を適用する)。ユーザーが実際に入力した元のカードは案内文として残す。 */
+  async function handleConfirmRemap() {
+    if (!flopMatch || flopMatchIsIdentity || !remappedPreview || !userCombo?.[0] || !userCombo?.[1]) return
+    const originalLabel = [
+      flopCardsArr.map(cardLabel).join(' '),
+      userCombo.filter((c): c is Card => c !== null).map(cardLabel).join(' '),
+      turnCard ? cardLabel(turnCard) : null,
+      riverCard ? cardLabel(riverCard) : null,
+    ]
+      .filter((s): s is string => !!s)
+      .join(' / ')
+    updateCustomAnalysis({
+      flop: flopMatch.flop,
+      userCombo: remappedPreview.combo,
+      turnCard: remappedPreview.turn,
+      riverCard: remappedPreview.river,
+      suitRemapNotice: `スート読み替え済み(元の入力: ${originalLabel})`,
+    })
+    await submitCustomHand()
+  }
+
+  /** 選択肢2: 生成AI相談用に、入力済みの情報を自己完結プロンプトへ整形してコピーする
+   *  (収録データが無い/読み替えでも対応できない場合の代替手段。読み替え可能な場合でも
+   *  常に選べる)。 */
+  async function handleCopyForAI() {
+    if (!scenario || !flopCardsFilled || userSeat === null || !userCombo?.[0] || !userCombo?.[1]) return
+    const md = buildCustomHandPrompt({
+      scenario,
+      flopCards: flopCardsArr,
+      userSeat,
+      userCombo: [userCombo[0], userCombo[1]],
+      turnCard,
+      riverCard,
+      streetActions,
+    })
+    try {
+      await navigator.clipboard.writeText(md)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      const blob = new Blob([md], { type: 'text/markdown' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'gto_custom_hand_prompt.md'
+      a.click()
+      URL.revokeObjectURL(url)
+    }
   }
 
   const canGoBack = scenario !== null
@@ -284,19 +347,49 @@ export function AnalyzerScreen() {
 
         {step === 'ready' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {/* 分岐1: 収録済みフロップと厳密一致 → 即解析。 */}
+            {flopMatch && flopMatchIsIdentity && (
+              <button type="button" disabled={phase === 'solving'} onClick={() => void handleSubmit()}>
+                {phase === 'solving' ? '精密ソルブ中…' : '解析する'}
+              </button>
+            )}
+
+            {/* 分岐2: スート違いの近い盤面がある → 読み替え確認+AI相談コピー。 */}
+            {flopMatch && !flopMatchIsIdentity && remappedPreview && (
+              <>
+                <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                  このフロップの完全一致データはありませんが、スート違いの近い盤面が見つかりました。
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--text)', background: 'var(--panel-bg)', border: '1px solid var(--panel-border)', borderRadius: 8, padding: 10, lineHeight: 1.8 }}>
+                  元の入力: {[flopCardsArr.map(cardLabel).join(' '), selectedCards.map(cardLabel).join(' '), turnCard && cardLabel(turnCard), riverCard && cardLabel(riverCard)].filter(Boolean).join(' / ')}
+                  <br />
+                  → 読み替え後: {[remappedPreview.flop.map(cardLabel).join(' '), remappedPreview.combo.map(cardLabel).join(' '), remappedPreview.turn && cardLabel(remappedPreview.turn), remappedPreview.river && cardLabel(remappedPreview.river)]
+                    .filter(Boolean)
+                    .join(' / ')}{' '}
+                  として解析します。
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  <button type="button" disabled={phase === 'solving'} onClick={() => void handleConfirmRemap()}>
+                    {phase === 'solving' ? '精密ソルブ中…' : '対応するデータへ読み替えて解析する'}
+                  </button>
+                  <button type="button" onClick={() => void handleCopyForAI()}>
+                    {copied ? 'コピー済み' : 'AIに相談用にコピー'}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {/* 分岐3: 同型クラスも未収録 → AI相談コピーのみ。 */}
             {!flopMatch && (
-              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                このフロップ(やスート違いの近い盤面)の収録データが見つかりませんでした。
-              </div>
+              <>
+                <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+                  このフロップ(やスート違いの近い盤面)の収録データが見つかりませんでした。
+                </div>
+                <button type="button" onClick={() => void handleCopyForAI()}>
+                  {copied ? 'コピー済み' : 'AIに相談用にコピー'}
+                </button>
+              </>
             )}
-            {flopMatch && !flopMatchIsIdentity && (
-              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
-                このフロップの完全一致データはありませんが、スート違いの近い盤面({flopMatch.flop.cards.join('')})が見つかりました。読み替えての解析は近日対応予定です。
-              </div>
-            )}
-            <button type="button" disabled={!flopMatch || !flopMatchIsIdentity || phase === 'solving'} onClick={() => void handleSubmit()}>
-              {phase === 'solving' ? '精密ソルブ中…' : '解析する'}
-            </button>
           </div>
         )}
       </div>

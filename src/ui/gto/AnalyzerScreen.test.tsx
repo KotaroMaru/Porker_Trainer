@@ -1,4 +1,4 @@
-import { describe, expect, it, beforeEach } from 'vitest'
+import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { AnalyzerScreen } from './AnalyzerScreen'
 import { initialTally, useGtoStore } from '../../gto/store'
@@ -144,6 +144,106 @@ describe('AnalyzerScreen', () => {
 
     expect(screen.getByText('解析の準備ができました')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: '解析する' })).not.toBeDisabled()
+  })
+
+  it('P12 Phase D 分岐2: スート違いの近い盤面がある場合、読み替え確認とAI相談コピーの両方を提示する(即解析ボタンは出さない)', async () => {
+    render(<AnalyzerScreen />)
+    await screen.findByText('カスタムハンド解析')
+
+    // Ac,Jc,Ks は未収録だが、収録済みのAh,Ks,Jhとスート置換で同型(flopIso.test.tsで検証済み)。
+    const flopCards: [Card, Card, Card] = [
+      { rank: 14, suit: 'c' },
+      { rank: 11, suit: 'c' },
+      { rank: 13, suit: 's' },
+    ]
+    const userCombo: [Card, Card] = [
+      { rank: 7, suit: 'd' },
+      { rank: 7, suit: 'h' },
+    ]
+    act(() => {
+      useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0], userSeat: 0, flopCards, userCombo })
+    })
+    act(() => {
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'check' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 1, label: 'bet33' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'fold' })
+    })
+
+    expect(screen.getByText('解析の準備ができました')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '解析する' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '対応するデータへ読み替えて解析する' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'AIに相談用にコピー' })).toBeInTheDocument()
+    // 読み替え後のプレビュー(適用順はflopCardsArrの入力順のまま=A♥J♥K♠)が表示される。
+    expect(screen.getByText(/読み替え後/)).toBeInTheDocument()
+    expect(screen.getByText(/A♥.*J♥.*K♠/)).toBeInTheDocument()
+  })
+
+  it('P12 Phase D 分岐3: 同型クラスも未収録の場合、AI相談コピーのみを提示する', async () => {
+    render(<AnalyzerScreen />)
+    await screen.findByText('カスタムハンド解析')
+
+    // 2c,7d,Jh は同型クラスも含めて未収録(flopIso.tsで確認済み、収録95フロップに
+    // このクラスの代表が無い)。
+    const flopCards: [Card, Card, Card] = [
+      { rank: 2, suit: 'c' },
+      { rank: 7, suit: 'd' },
+      { rank: 11, suit: 'h' },
+    ]
+    const userCombo: [Card, Card] = [
+      { rank: 5, suit: 'c' },
+      { rank: 5, suit: 's' },
+    ]
+    act(() => {
+      useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0], userSeat: 0, flopCards, userCombo })
+    })
+    act(() => {
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'check' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 1, label: 'bet33' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'fold' })
+    })
+
+    expect(screen.getByText('解析の準備ができました')).toBeInTheDocument()
+    expect(screen.getByText(/収録データが見つかりませんでした/)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '解析する' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '対応するデータへ読み替えて解析する' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'AIに相談用にコピー' })).toBeInTheDocument()
+  })
+
+  it('P12 Phase D: 「AIに相談用にコピー」でシナリオ・盤面・手札・アクション履歴を含むプロンプトがクリップボードへコピーされる', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+
+    render(<AnalyzerScreen />)
+    await screen.findByText('カスタムハンド解析')
+
+    const flopCards: [Card, Card, Card] = [
+      { rank: 2, suit: 'c' },
+      { rank: 7, suit: 'd' },
+      { rank: 11, suit: 'h' },
+    ]
+    const userCombo: [Card, Card] = [
+      { rank: 5, suit: 'c' },
+      { rank: 5, suit: 's' },
+    ]
+    act(() => {
+      useGtoStore.getState().updateCustomAnalysis({ scenario: SCENARIOS[0], userSeat: 0, flopCards, userCombo })
+    })
+    act(() => {
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'check' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 1, label: 'bet33' })
+      useGtoStore.getState().addCustomAction('flop', { seat: 0, label: 'fold' })
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'AIに相談用にコピー' }))
+    await screen.findByText('コピー済み')
+
+    expect(writeText).toHaveBeenCalledTimes(1)
+    const copiedText = writeText.mock.calls[0][0] as string
+    expect(copiedText).toContain(SCENARIOS[0].label)
+    expect(copiedText).toContain('2♣ 7♦ J♥')
+    expect(copiedText).toContain('5♣ 5♠')
+    expect(copiedText).toContain('チェック')
+    expect(copiedText).toContain('フォールド')
   })
 })
 

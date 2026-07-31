@@ -8,7 +8,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { render, screen, waitFor } from '@testing-library/react'
 import { ReviewScreen } from './ReviewScreen'
-import { useGtoStore, initialTally } from '../../gto/store'
+import { useGtoStore, initialTally, type CustomAnalyzerState } from '../../gto/store'
 import { __resetSolutionCacheForTests } from '../../gto/loader/solutionLoader'
 import { VERDICT_LABEL } from './labels'
 import type { Card } from '../../engine/types'
@@ -137,6 +137,42 @@ describe('ReviewScreen', () => {
     await waitFor(() => {
       expect(screen.getByText('コピー済み')).toBeInTheDocument()
     })
+  })
+
+  function customAnalyzerWithNotice(notice: string | null): CustomAnalyzerState {
+    return {
+      scenario: null,
+      flopCards: [null, null, null],
+      flop: null,
+      userSeat: null,
+      userCombo: null,
+      turnCard: null,
+      riverCard: null,
+      streetActions: { flop: [], turn: [], river: [] },
+      phase: 'input',
+      error: null,
+      suitRemapNotice: notice,
+    }
+  }
+
+  it('P12 Phase D: reviewSource==="custom"かつsuitRemapNoticeがある場合のみ読み替えバッジを表示する', async () => {
+    await advanceToGraded()
+    useGtoStore.setState({
+      reviewSource: 'custom',
+      customAnalyzer: customAnalyzerWithNotice('スート読み替え済み(元の入力: A♣ J♣ K♠ / 7♦ 7♥)'),
+    })
+    render(<ReviewScreen />)
+    expect(screen.getByText(/スート読み替え済み/)).toBeInTheDocument()
+  })
+
+  it('P12 Phase D: reviewSource==="live"の場合はsuitRemapNoticeがあってもバッジを表示しない', async () => {
+    await advanceToGraded()
+    useGtoStore.setState({
+      reviewSource: 'live',
+      customAnalyzer: customAnalyzerWithNotice('スート読み替え済み(元の入力: …)'),
+    })
+    render(<ReviewScreen />)
+    expect(screen.queryByText(/スート読み替え済み/)).not.toBeInTheDocument()
   })
 
   it('「次のハンド」クリックでnextSpotが呼ばれ、新しいスポットへ遷移する', async () => {
