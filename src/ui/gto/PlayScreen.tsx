@@ -1,19 +1,20 @@
 import { useEffect } from 'react'
 import { useGtoStore, type SessionTally } from '../../gto/store'
 import { boardFromFlop } from '../../gto/trainer/gameFlow'
-import { buildPreflopScript } from '../../gto/trainer/preflopScript'
 import { isOopPosition } from '../../gto/data/scenarios'
-import type { Street, HistoryEntry } from '../../gto/trainer/reviewBuilder'
 import { ReviewScreen } from './ReviewScreen'
 import { ResultSummaryScreen } from './ResultSummaryScreen'
-import { actionLabelJa, rankLabel, suitSymbol, STREET_LABEL_JA } from './labels'
+import { actionLabelJa } from './labels'
 import { PokerTableView } from './PokerTableView'
 import { ActionButtonRow } from './ActionButtonRow'
+import { SingleSpotHistoryStrip, FullHandHistoryStrip } from './StreetHistoryStrip'
 
 // P4 Step D / P5 Step B9: プレイ画面。settings.modeで単発/通しの2実装に分岐する
 // (P6 Step B8で通し=FullHandPlayScreenを追加。単発=SingleSpotPlayScreenは無変更)。
 // P11 Phase A: フェルトテーブル描画・アクションボタン列を共有部品(PokerTableView/
 // ActionButtonRow)へ切り出した(挙動不変)。
+// P13 Phase A: ストリート別履歴ストリップを共有部品(StreetHistoryStrip)へ切り出した
+// (挙動不変、DailyChallengeScreen.tsxでも使うため)。
 
 export function PlayScreen() {
   const mode = useGtoStore((s) => s.settings.mode)
@@ -68,49 +69,18 @@ function SingleSpotPlayScreen() {
   const userPosition = spot.userSeat === 0 ? oopPosition : ipPosition
   const botPosition = spot.userSeat === 0 ? ipPosition : oopPosition
 
-  const preflopLines = buildPreflopScript(spot.scenario)
   const board = boardFromFlop(spot.flop)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* ストリート別履歴ストリップ */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 0,
-          border: '1px solid var(--panel-border)',
-          borderRadius: 8,
-          overflow: 'hidden',
-          fontSize: 13,
-        }}
-      >
-        <div style={{ flex: 1, padding: 8, borderRight: '1px solid var(--panel-border)' }}>
-          <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 4 }}>プリフロップ</div>
-          {preflopLines.map((line, i) => (
-            <div key={i} style={{ color: 'var(--text)' }}>
-              {line.position}: {line.action} {line.amountBb}
-            </div>
-          ))}
-        </div>
-        <div style={{ flex: 1, padding: 8, background: 'var(--panel-bg-light)' }}>
-          <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 4, display: 'flex', gap: 4, alignItems: 'center' }}>
-            <span>フロップ</span>
-            {board.map((c, i) => (
-              <span key={i} style={{ color: c.suit === 'h' || c.suit === 'd' ? 'var(--card-red)' : 'var(--text)' }}>
-                {rankLabel(c.rank)}
-                {suitSymbol(c.suit)}
-              </span>
-            ))}
-            <span>({spot.scenario.potBb})</span>
-          </div>
-          {spot.botActionsBefore.map((entry, i) => (
-            <div key={i} style={{ color: 'var(--text)' }}>
-              {botPosition}: {actionLabelJa(entry.label)}
-            </div>
-          ))}
-          <div style={{ background: 'var(--gold)', color: '#000', display: 'inline-block', padding: '1px 6px', borderRadius: 4 }}>{userPosition}: ?</div>
-        </div>
-      </div>
+      <SingleSpotHistoryStrip
+        scenario={spot.scenario}
+        board={board}
+        potBb={spot.scenario.potBb}
+        userPosition={userPosition}
+        botPosition={botPosition}
+        botActionsBefore={spot.botActionsBefore}
+      />
 
       {/* テーブル */}
       <PokerTableView
@@ -207,36 +177,9 @@ function FullHandPlayScreen() {
   }
 
   // 履歴をストリートごとにグループ化して列を作る(preflop/flop/turn/riverの出現順)。
-  const grouped = new Map<Street, HistoryEntry[]>()
-  for (const entry of fullHand.history) {
-    if (!grouped.has(entry.street)) grouped.set(entry.street, [])
-    grouped.get(entry.street)!.push(entry)
-  }
-  if (!grouped.has(fullHand.street)) grouped.set(fullHand.street, []) // 遷移直後、まだ誰も行動していない列も表示する
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* ストリート別履歴ストリップ(preflop+到達済みの各街) */}
-      <div style={{ display: 'flex', gap: 0, border: '1px solid var(--panel-border)', borderRadius: 8, overflow: 'hidden', fontSize: 13, overflowX: 'auto' }}>
-        {[...grouped.entries()].map(([street, lines]) => (
-          <div
-            key={street}
-            style={{
-              flex: '1 0 90px',
-              padding: 8,
-              borderRight: '1px solid var(--panel-border)',
-              background: street === fullHand.street ? 'var(--panel-bg-light)' : undefined,
-            }}
-          >
-            <div style={{ color: 'var(--text-dim)', fontSize: 11, marginBottom: 4 }}>{STREET_LABEL_JA[street]}</div>
-            {lines.map((line, i) => (
-              <div key={i} style={{ color: line.isUserDecision ? 'var(--gold-light)' : 'var(--text)' }}>
-                {line.position}: {street === 'preflop' ? line.label : actionLabelJa(line.label)}
-              </div>
-            ))}
-          </div>
-        ))}
-      </div>
+      <FullHandHistoryStrip history={fullHand.history} currentStreet={fullHand.street} />
 
       {/* テーブル */}
       <PokerTableView

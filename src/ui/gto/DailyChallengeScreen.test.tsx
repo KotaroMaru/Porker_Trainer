@@ -135,6 +135,9 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
 
     expect(screen.getByText('3/10問目 ・ 単発モード')).toBeInTheDocument()
     expect(screen.getByText(`ポット ${spot.scenario.potBb.toFixed(1)}bb`)).toBeInTheDocument()
+    // P13 Phase A: プリフロップの行動が単発モードでも表示されること
+    // (以前はDailyChallengeScreenに履歴ストリップ自体が無く欠けていた)。
+    expect(screen.getByText('プリフロップ')).toBeInTheDocument()
   })
 
   it('通しモードでプレイ中はPokerTableView+進捗を表示し、userTurn中はアクションボタンが出る', () => {
@@ -149,6 +152,9 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
     expect(screen.getByText('1/10問目 ・ 通しモード')).toBeInTheDocument()
     expect(screen.getByText('チェック')).toBeInTheDocument()
     expect(screen.getByText('ベット 33%')).toBeInTheDocument()
+    // P13 Phase A: プリフロップの行動が通しモードでも表示されること。
+    expect(screen.getByText('プリフロップ')).toBeInTheDocument()
+    expect(screen.getByText(`${scenario.raiser.position}: レイズ 2.5bb`)).toBeInTheDocument()
   })
 
   it('通しモードでbotThinking中はアクションボタンを出さず考え中表示にする', () => {

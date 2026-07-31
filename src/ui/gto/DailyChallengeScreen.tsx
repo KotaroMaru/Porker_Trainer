@@ -9,11 +9,14 @@ import { PokerTableView } from './PokerTableView'
 import { ActionButtonRow } from './ActionButtonRow'
 import { ReviewScreen } from './ReviewScreen'
 import { actionLabelJa } from './labels'
+import { SingleSpotHistoryStrip, FullHandHistoryStrip } from './StreetHistoryStrip'
 
 // P11 Phase C: デイリーチャレンジを単発/通し両モードに対応させ、1問(単発)/1ハンド(通し)
 // ごとにレビュー画面を挟むよう拡張した(store.ts側でphase:'idle'|'playing'|'reviewing'|'done'
 // の4段階に拡張済み)。プレイ中の盤面はPhase A/Bで整備済みの共有部品(PokerTableView/
 // ActionButtonRow)を使い、単発の自前簡易盤面(旧実装)は廃止した。
+// P13 Phase A: プリフロップの行動が表示されていなかった不具合を、PlayScreen.tsxと共通の
+// StreetHistoryStrip(P13 Phase Aで抽出)を追加することで解消した。
 
 function RecentScores() {
   const results = useMemo(() => loadDailyResults(), [])
@@ -88,6 +91,14 @@ export function DailyChallengeScreen() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex + 1}/{dailyChallenge.totalHands}問目 ・ 単発モード</div>
+        <SingleSpotHistoryStrip
+          scenario={spot.scenario}
+          board={board}
+          potBb={spot.scenario.potBb}
+          userPosition={userPosition}
+          botPosition={botPosition}
+          botActionsBefore={spot.botActionsBefore}
+        />
         <PokerTableView
           board={board}
           heroCombo={spot.userCombo}
@@ -111,6 +122,7 @@ export function DailyChallengeScreen() {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ color: 'var(--gold-light)', fontWeight: 600 }}>{dailyChallenge.handIndex + 1}/{dailyChallenge.totalHands}問目 ・ 通しモード</div>
+        <FullHandHistoryStrip history={fullHand.history} currentStreet={fullHand.street} />
         <PokerTableView
           board={fullHand.board}
           heroCombo={fullHand.userCombo}
