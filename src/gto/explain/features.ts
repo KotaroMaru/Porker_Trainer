@@ -25,6 +25,53 @@ export const HAND_CLASS_JA: Record<HandStrength, string> = {
   AIR: 'エア(ショーダウン価値なし)',
 }
 
+/**
+ * P13 Phase B-2(あ): AIRクラス(HandStrength上はノーペアを一括りにする)は、実際には
+ * A♠2♥ on K♥9♠3♦のようなハイカードにも「エア(ショーダウン価値なし)」と表示してしまう
+ * バグがあった(ユーザー報告)。HandStrength型・classifyHandStrength()自体は旧アプリ
+ * (ヨコサワモデル)が依存するため変更せず、表示ラベルだけをここで補正する。
+ * 境界(ボード最高ランクと同ランク)はキッカー勝負にしかならずSDV無し側に含める。
+ */
+export type NoPairShowdownValue = 'highCard' | 'air'
+
+export function classifyNoPairShowdownValue(combo: Combo, board: readonly Card[]): NoPairShowdownValue {
+  const maxBoardRank = Math.max(...board.map((c) => c.rank))
+  return combo.some((c) => c.rank > maxBoardRank) ? 'highCard' : 'air'
+}
+
+const NO_PAIR_SDV_LABEL_JA: Record<NoPairShowdownValue, string> = {
+  highCard: 'ショーダウン価値のあるハイカード',
+  air: 'エア(ショーダウン価値なし)',
+}
+
+/**
+ * P13 Phase B-2(い): 「弱いペア」は、MDF・ブロッカーで守るブラフキャッチャー型と、
+ * ドロー完成の期待値で評価すべきドロー付きペア型とで推奨理由が根本的に異なるため、
+ * 表示ラベルを2分割する。判定はdraws(既存)を主信号とする。
+ */
+export type WeakPairSubtype = 'bluffCatcher' | 'drawPaired'
+
+export function classifyWeakPairSubtype(draws: ReturnType<typeof classifyDraws>): WeakPairSubtype {
+  return draws.hasFlushDraw || draws.hasOESD ? 'drawPaired' : 'bluffCatcher'
+}
+
+const WEAK_PAIR_SUBTYPE_LABEL_JA: Record<WeakPairSubtype, string> = {
+  bluffCatcher: '弱いペア(ブラフキャッチャー型)',
+  drawPaired: '弱いペア(ドロー付き)',
+}
+
+/**
+ * features.handClassの表示ラベルを決める。AIR/WEAK_PAIRのみ細分化したラベルへ差し替え、
+ * それ以外はHAND_CLASS_JAをそのまま使う。sameClass.classJa(同クラス平均頻度の説明に使う、
+ * 細分化前の母集団全体の値)は意図的にこの関数を経由させない(既存テストの契約通り
+ * HAND_CLASS_JA[handClass]と一致させる)。
+ */
+export function handClassLabelJa(handClass: HandStrength, noPairShowdownValue: NoPairShowdownValue | null, weakPairSubtype: WeakPairSubtype | null): string {
+  if (handClass === 'AIR' && noPairShowdownValue !== null) return NO_PAIR_SDV_LABEL_JA[noPairShowdownValue]
+  if (handClass === 'WEAK_PAIR' && weakPairSubtype !== null) return WEAK_PAIR_SUBTYPE_LABEL_JA[weakPairSubtype]
+  return HAND_CLASS_JA[handClass]
+}
+
 export type NodeContext = { kind: 'root' } | { kind: 'facingBet'; betAmountBb: number; potBeforeCallBb: number }
 
 export interface ActionResponseSummary {
@@ -85,6 +132,10 @@ export interface SpotFeatures {
   nodeContext: NodeContext
   boardTexture: BoardTexture
   handClass: HandStrength
+  /** handClass==='AIR'の場合のみ非null(P13 Phase B-2あ)。 */
+  noPairShowdownValue: NoPairShowdownValue | null
+  /** handClass==='WEAK_PAIR'の場合のみ非null(P13 Phase B-2い)。 */
+  weakPairSubtype: WeakPairSubtype | null
   draws: ReturnType<typeof classifyDraws>
   heroComboEquity: number
   /** 0-100。自分のレンジ内で加重した実手札のエクイティ順位(高いほど強い側)。 */
@@ -301,7 +352,6 @@ function computeBlockedValuePct(
   const userKeys = new Set(userCombo.map(cardKey))
   let total = 0
   let blocked = 0
-  const examples: { combo: Combo; weight: number }[] = []
   const byHand = new Map<string, { comboCount: number; weight: number }>()
   for (let i = 0; i < villainCombos.length; i++) {
     if (weights[i] <= 0 || Number.isNaN(villainEquity[i]) || villainEquity[i] < threshold) continue
@@ -309,7 +359,6 @@ function computeBlockedValuePct(
     const collides = villainCombos[i].some((c) => userKeys.has(cardKey(c)))
     if (collides) {
       blocked += weights[i]
-      examples.push({ combo: villainCombos[i], weight: weights[i] })
       const hand = handStrFromCombo(villainCombos[i])
       const entry = byHand.get(hand) ?? { comboCount: 0, weight: 0 }
       entry.comboCount += 1
@@ -317,13 +366,15 @@ function computeBlockedValuePct(
       byHand.set(hand, entry)
     }
   }
-  examples.sort((a, b) => b.weight - a.weight)
   const blockedHands = [...byHand.entries()]
     .map(([hand, entry]) => ({ hand, comboCount: entry.comboCount, weightPct: blocked > 0 ? (entry.weight / blocked) * 100 : 0 }))
     .sort((a, b) => b.weightPct - a.weightPct || a.hand.localeCompare(b.hand))
   return {
     pct: total > 0 ? (blocked / total) * 100 : 0,
-    blockedExamples: examples.slice(0, 3).map((e) => handStrFromCombo(e.combo)),
+    // P13 Phase B-1: 以前はコンボ単位の例示(重複除去なし)をハンド表記へ変換していたため
+    // 「AKo, AKo, AKs」のように同一ハンドが重複していた(ユーザー報告)。blockedHandsは
+    // 既にハンド単位で集約・降順ソート済みなので、そこから作れば重複しない。
+    blockedExamples: blockedHands.slice(0, 3).map((h) => h.hand),
     blockedHands,
   }
 }
@@ -368,6 +419,8 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const handClass = classifyHandStrength(userCombo, board)
   const draws = classifyDraws(userCombo, board)
+  const noPairShowdownValue = handClass === 'AIR' ? classifyNoPairShowdownValue(userCombo, board) : null
+  const weakPairSubtype = handClass === 'WEAK_PAIR' ? classifyWeakPairSubtype(draws) : null
 
   const rangeEq = computeSharedRunoutEquity({
     heroCombos: decision.heroCombos,
@@ -450,6 +503,8 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     nodeContext,
     boardTexture,
     handClass,
+    noPairShowdownValue,
+    weakPairSubtype,
     draws,
     heroComboEquity,
     eqPercentileInRange,

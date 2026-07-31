@@ -7,7 +7,7 @@
 import type { Combo } from '../../analysis/range'
 import { cardLabel } from '../../engine/deck'
 import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
-import { HAND_CLASS_JA, type SpotFeatures } from './features'
+import { handClassLabelJa, type SpotFeatures } from './features'
 import type { Explanation } from './templates'
 
 const ACTION_LABEL_JA: Record<string, string> = {
@@ -64,7 +64,7 @@ function buildStrategyTable(decision: ReviewDecision): string {
 function buildFeaturesSection(features: SpotFeatures | null): string {
   if (!features) return '(計算中、または未計算)'
   const lines: string[] = [
-    `- ハンドクラス: ${HAND_CLASS_JA[features.handClass]}`,
+    `- ハンドクラス: ${handClassLabelJa(features.handClass, features.noPairShowdownValue, features.weakPairSubtype)}`,
     `- 実質エクイティ: ${pct(features.heroComboEquity)}(レンジ内上位${Math.round(100 - features.eqPercentileInRange)}%相当)`,
     `- レンジ優位: ${features.rangeAdvantage.verdictJa}(自分平均${pct(features.rangeAdvantage.heroAvg)} / 相手平均${pct(features.rangeAdvantage.villainAvg)})`,
     `- ナッツ優位: ${features.nutsAdvantage.verdictJa}(自分${features.nutsAdvantage.heroTopPct.toFixed(0)}% / 相手${features.nutsAdvantage.villainTopPct.toFixed(0)}%)`,

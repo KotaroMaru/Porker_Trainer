@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { classifyBoardTexture, computeSpotFeatures, HAND_CLASS_JA } from './features'
+import { classifyBoardTexture, computeSpotFeatures, classifyNoPairShowdownValue, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
+import { classifyDraws } from '../../analysis/outs'
 import { computeSharedRunoutEquity } from './rangeEquity'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
 import { RANGE_TRACKER_EPSILON } from '../trainer/rangeTracker'
@@ -74,6 +75,44 @@ describe('classifyBoardTexture', () => {
     expect(texture.heightJa).toBe('ロー')
     expect(texture.connected).toBe(false)
     expect(() => classifyBoardTexture([card(14, 's'), card(13, 'h')])).toThrow('expected 3 to 5 cards')
+  })
+})
+
+describe('classifyNoPairShowdownValue (P13 Phase B-2あ)', () => {
+  const board = [card(13, 'h'), card(9, 's'), card(3, 'd')] // K♥9♠3♦、最高ランクK(13)
+
+  it('A♠2♥(ボード最高ランクを上回るAを含む)を highCard に分類する', () => {
+    expect(classifyNoPairShowdownValue([card(14, 's'), card(2, 'h')], board)).toBe('highCard')
+  })
+
+  it('7♠2♥(ボード最高ランクを上回るカードが無い)を air に分類する', () => {
+    expect(classifyNoPairShowdownValue([card(7, 's'), card(2, 'h')], board)).toBe('air')
+  })
+
+  it('境界: ボード最高ランクと同ランクのカードは超えていないため air 側に含める', () => {
+    expect(classifyNoPairShowdownValue([card(13, 'c'), card(2, 'h')], board)).toBe('air')
+  })
+})
+
+describe('classifyWeakPairSubtype (P13 Phase B-2い)', () => {
+  it('TT on K♥J♣3♣7♥(ドロー無し)を bluffCatcher に分類する', () => {
+    const board = [card(13, 'h'), card(11, 'c'), card(3, 'c'), card(7, 'h')]
+    const combo = [card(10, 's'), card(10, 'd')]
+    const draws = classifyDraws(combo, board)
+    expect(draws.hasFlushDraw).toBe(false)
+    expect(draws.hasOESD).toBe(false)
+    expect(classifyWeakPairSubtype(draws)).toBe('bluffCatcher')
+  })
+
+  it('ペア+フラッシュドローの手を drawPaired に分類する', () => {
+    // ボードに既にハートが3枚(K♥9♥5♥)あるため、手札のハート1枚(4♥)で4枚に到達し
+    // フラッシュドロー成立。9♠でボードの9とペアになる(9♥は既にボード側にあるため
+    // ペア札自体をハートにはできない)。
+    const board = [card(13, 'h'), card(9, 'h'), card(5, 'h')]
+    const combo = [card(9, 's'), card(4, 'h')]
+    const draws = classifyDraws(combo, board)
+    expect(draws.hasFlushDraw).toBe(true)
+    expect(classifyWeakPairSubtype(draws)).toBe('drawPaired')
   })
 })
 
@@ -442,6 +481,24 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
         expect(expectedEntry?.comboCount).toBe(actual[i].comboCount)
         if (i > 0) expect(actual[i - 1].weightPct).toBeGreaterThanOrEqual(actual[i].weightPct)
       }
+    })
+
+    it('P13 Phase B-1回帰: blockedExamplesはハンド単位で重複しない(同一ハンドの複数コンボが混在する入力で確認)', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = spot.decodedNode.actionLabels[0]
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const features = computeSpotFeatures(review, 0)
+
+      // このテストが意味を持つには、少なくとも1ハンドが複数コンボでブロックされている必要がある
+      // (でなければ重複バグの再現条件を満たさない)。
+      expect(features.blockers.valueBlockedHands.some((h) => h.comboCount > 1)).toBe(true)
+
+      const examples = features.blockers.blockedExamples
+      expect(new Set(examples).size).toBe(examples.length)
+      // 例示は「ハンド単位で集約・降順ソート済み」のblockedHands先頭と一致する(旧実装は
+      // コンボ単位の未重複配列から作っていたため「AKo, AKo, AKs」のように重複していた)。
+      expect(examples).toEqual(features.blockers.valueBlockedHands.slice(0, examples.length).map((h) => h.hand))
     })
   })
 

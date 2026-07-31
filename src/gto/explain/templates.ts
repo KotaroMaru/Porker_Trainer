@@ -9,7 +9,7 @@
 
 import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
-import type { SpotFeatures } from './features'
+import { handClassLabelJa, type SpotFeatures } from './features'
 
 export interface Explanation {
   /** 結論1行。 */
@@ -104,7 +104,8 @@ function buildMixedStrategyNote(decision: ReviewDecision): string | null {
 
 function buildHandParagraph(features: SpotFeatures): string {
   const topPct = Number.isNaN(features.eqPercentileInRange) ? null : Math.round(100 - features.eqPercentileInRange)
-  const base = `あなたの手は${features.sameClass.classJa}で、実質エクイティは${pctVal(features.heroComboEquity * 100)}` + (topPct !== null ? `(自分のレンジ内で上位${topPct}%相当)` : '') + 'です。'
+  const handClassLabel = handClassLabelJa(features.handClass, features.noPairShowdownValue, features.weakPairSubtype)
+  const base = `あなたの手は${handClassLabel}で、実質エクイティは${pctVal(features.heroComboEquity * 100)}` + (topPct !== null ? `(自分のレンジ内で上位${topPct}%相当)` : '') + 'です。'
   const drawParts: string[] = []
   if (features.draws.hasFlushDraw) drawParts.push('フラッシュドロー')
   if (features.draws.hasOESD) drawParts.push('オープンエンドストレートドロー')

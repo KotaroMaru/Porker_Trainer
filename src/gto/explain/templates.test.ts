@@ -94,6 +94,8 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
     nodeContext,
     boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
     handClass,
+    noPairShowdownValue: handClass === 'AIR' ? 'highCard' : null,
+    weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 },
     heroComboEquity: 0.55,
     eqPercentileInRange: 62,
