@@ -11,6 +11,8 @@ import { DivergenceScreen } from './DivergenceScreen'
 // P6 Step B10: タブ状態はローカルuseStateからstoreのactiveTabへ引き上げた
 // (openBookmark/closeBookmarkがpropコールバックの受け渡し無しで直接タブ遷移できるようにするため)。
 
+// P12 Phase A-3: 'range'/'tierquiz'は新GTOアプリ(GtoApp.tsx)専用のタブで、この旧アプリの
+// タブ列(下の配列)には含めない。GtoTabがunion型であるためRecordは網羅する必要がある。
 const MODE_LABELS: Record<GtoTab, string> = {
   play: 'プレイ',
   review: 'カスタム解析',
@@ -18,6 +20,8 @@ const MODE_LABELS: Record<GtoTab, string> = {
   settings: '設定',
   daily: 'デイリー',
   divergence: 'ズレ分析',
+  range: 'レンジ表',
+  tierquiz: '色当てクイズ',
 }
 
 export function GtoTrainerView() {

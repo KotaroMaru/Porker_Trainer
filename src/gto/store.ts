@@ -67,8 +67,11 @@ export function selectFlopPool(flops: readonly FlopDef[], availableFlopIds: read
 export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | 'botThinking' | 'handOver'
 export type ReviewFeaturesStatus = 'idle' | 'computing' | 'ready' | 'error'
 /** GtoTrainerViewのサブ画面タブ。P6 B10からstoreへ引き上げた(openBookmark/closeBookmarkが
- *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。 */
-export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings' | 'daily' | 'divergence'
+ *  UI側にコールバックを配線せず直接タブ遷移できるようにするため)。
+ *  P12 Phase A-3: 'range'(ヨコサワレンジ表)・'tierquiz'(ヨコサワ色当て)を追加。
+ *  新GTOアプリ(GtoApp.tsx)の「学習」トップタブのサブタブとして使う(旧アプリの
+ *  StudyView/QuizViewから共有抽出した表示のみをGTOアプリ側から差し込む、ロジック非接触)。 */
+export type GtoTab = 'play' | 'review' | 'bookmarks' | 'settings' | 'daily' | 'divergence' | 'range' | 'tierquiz'
 /** 表示中のreviewの由来。'bookmark'ならReviewScreenの「次のハンド」を「一覧へ戻る」に差し替える。 */
 export type ReviewSource = 'live' | 'bookmark' | 'custom'
 

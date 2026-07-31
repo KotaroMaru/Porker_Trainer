@@ -8,9 +8,11 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: 'PokerTrainer',
-        short_name: 'PokerTrainer',
-        description: 'ポーカートレーナー - セブキャッシュゲーム向けアドバイザー',
+        // P12 Phase A-3: 実利用がGTO練習主体になったためマニフェスト表記もGTO主体へ更新。
+        // start_urlは既存のService Workerキャッシュとの整合のため変更しない。
+        name: 'GTO Trainer',
+        short_name: 'GTO Trainer',
+        description: 'ポーカーGTOポストフロップトレーナー',
         start_url: '/',
         display: 'standalone',
         background_color: '#0f2a1a',
