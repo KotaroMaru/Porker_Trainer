@@ -352,6 +352,13 @@ export class FullHandController {
   private refineProgressTimer: ReturnType<typeof setInterval> | null = null
   /** リファイン用に一時的に開いているprovider(dispose()からのキャンセル対象)。 */
   private activeRefineProvider: StreetNodeProvider | null = null
+  /**
+   * P13 Phase E-1: ボット決断待ち(advance()がprovider.readyを待つ間)の進捗ポーリング用
+   * タイマー。emit()はフェーズ遷移時にしか呼ばれないため、これが無いと「解析0%」のまま
+   * 進捗が一切更新されず、ソルブ完了時に急に終わったように見える(ユーザー報告)。
+   * refineProgressTimerと同じ設計(一定間隔でprovider.progress()を読み直しemit())。
+   */
+  private botSolveProgressTimer: ReturnType<typeof setInterval> | null = null
   /** 街遷移・リファイン完了・controller破棄をまたいだ同一providerの二重disposeを防ぐ。 */
   private readonly disposedProviders = new Set<StreetNodeProvider>()
   /** dispose()済みなら以後のemit/onErrorを抑止する(二重dispose・破棄後のstore更新を防ぐ)。 */
@@ -424,6 +431,26 @@ export class FullHandController {
       userPosition: this.positionOf(this.userSeat),
       botPosition: this.positionOf(this.botSeat),
     })
+  }
+
+  /**
+   * P13 Phase E-1: provider.readyをそのまま待つのではなく、待機中も一定間隔でemit()し
+   * solveProgressをUIへ反映し続ける。advance()の状態遷移ロジック自体は変えない
+   * (待つ対象・待った後の分岐は従来通りprovider.readyのまま)。
+   */
+  private async waitForProviderReadyWithProgress(provider: StreetNodeProvider): Promise<void> {
+    this.botSolveProgressTimer = setInterval(() => {
+      if (this.disposed) return
+      this.emit()
+    }, 200)
+    try {
+      await provider.ready
+    } finally {
+      if (this.botSolveProgressTimer !== null) {
+        clearInterval(this.botSolveProgressTimer)
+        this.botSolveProgressTimer = null
+      }
+    }
   }
 
   /**
@@ -526,7 +553,7 @@ export class FullHandController {
 
         this.phase = 'botDeciding'
         this.emit()
-        await this.provider.ready
+        await this.waitForProviderReadyWithProgress(this.provider)
         const nodeId = this.curNodeId
         const decisionNode = this.curNode
         const fetched = await this.provider.getNodes([nodeId])
@@ -865,6 +892,10 @@ export class FullHandController {
     if (this.refineProgressTimer !== null) {
       clearInterval(this.refineProgressTimer)
       this.refineProgressTimer = null
+    }
+    if (this.botSolveProgressTimer !== null) {
+      clearInterval(this.botSolveProgressTimer)
+      this.botSolveProgressTimer = null
     }
     this.deps.providerFactory.dispose()
   }

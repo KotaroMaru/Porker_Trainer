@@ -85,13 +85,34 @@ describe('solverWorker P9-2 session registry', () => {
     expect(result.solution.iterationsRun).toBe(5)
   })
 
+  it('P13 Phase E-2回帰: solveStreetのprogressはcheckEveryIterations境界より高頻度・単調増加で届く', async () => {
+    // checkEveryIterations=maxIterations=20だと、旧実装ではexploitability計測(=progress送出)
+    // が完了時の1回しか起きなかった(0%のまま急に完了する不具合の一因)。
+    // PROGRESS_POST_EVERY_ITERATIONS=5により、5,10,15,20の4回に分かれて届くはず。
+    const base = solveRequest('progress-granularity')
+    if (base.kind !== 'solveStreet') throw new Error('unexpected request kind')
+    send({ ...base, maxIterations: 20, checkEveryIterations: 20 })
+    await waitForMessage((message) => message.kind === 'result' && message.requestId === 'progress-granularity')
+
+    const progressMessages = posted.filter(
+      (message): message is Extract<WorkerResponse, { kind: 'progress' }> => message.kind === 'progress' && message.requestId === 'progress-granularity',
+    )
+    expect(progressMessages.length).toBeGreaterThan(1)
+    expect(progressMessages.map((m) => m.iterationsRun)).toEqual([5, 10, 15, 20])
+    for (let i = 1; i < progressMessages.length; i++) {
+      expect(progressMessages[i].iterationsRun).toBeGreaterThan(progressMessages[i - 1].iterationsRun)
+    }
+  })
+
   it('複数solveIdを保持し、同一セッションを継続しながらチャンク間のgetNodesに応答する', async () => {
+    // P13 Phase E-3: solveStreetはyieldToWorkerEventLoop()を挟むようになったため、
+    // 完了はマクロタスク境界をまたぐ(以前のような同期完了ではない)。
     send(solveRequest('solve-a'))
-    const firstResult = posted.find((message) => message.kind === 'result' && message.requestId === 'solve-a')
+    const firstResult = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'solve-a')
     if (firstResult?.kind !== 'result') throw new Error(`first solve failed: ${JSON.stringify(posted)}`)
 
     send(solveRequest('solve-b'))
-    const secondResult = posted.find((message) => message.kind === 'result' && message.requestId === 'solve-b')
+    const secondResult = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'solve-b')
     expect(secondResult?.kind).toBe('result')
     if (secondResult?.kind !== 'result') throw new Error('second solve failed')
     expect(secondResult.solution.solveId).not.toBe(firstResult.solution.solveId)
@@ -145,11 +166,11 @@ describe('solverWorker P9-2 session registry', () => {
 
   it('大きなリファイン中も別solveIdのgetNodesへ有界時間内に応答する', async () => {
     send(solveRequest('refine-base'))
-    const refineBase = posted.find((message) => message.kind === 'result' && message.requestId === 'refine-base')
+    const refineBase = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'refine-base')
     if (refineBase?.kind !== 'result') throw new Error('refine base solve failed')
 
     send(solveRequest('nodes-base'))
-    const nodesBase = posted.find((message) => message.kind === 'result' && message.requestId === 'nodes-base')
+    const nodesBase = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'nodes-base')
     if (nodesBase?.kind !== 'result') throw new Error('nodes base solve failed')
 
     send({
@@ -179,7 +200,7 @@ describe('solverWorker P9-2 session registry', () => {
 
   it('refineProgressは毎チャンクの正確な反復数と測定間引き中のexploitabilityを通知する', async () => {
     send(solveRequest('progress-base'))
-    const result = posted.find((message) => message.kind === 'result' && message.requestId === 'progress-base')
+    const result = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'progress-base')
     if (result?.kind !== 'result') throw new Error('progress base solve failed')
 
     send({
@@ -205,7 +226,7 @@ describe('solverWorker P9-2 session registry', () => {
 
   it('requestId単位のcancelで進行中refineを止め、完了後にprogressを追加しない', async () => {
     send(solveRequest('solve-cancel-base'))
-    const result = posted.find((message) => message.kind === 'result' && message.requestId === 'solve-cancel-base')
+    const result = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'solve-cancel-base')
     if (result?.kind !== 'result') throw new Error('base solve failed')
 
     const postMessageMock = vi.mocked(self.postMessage)

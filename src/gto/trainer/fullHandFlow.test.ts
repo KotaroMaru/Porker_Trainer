@@ -669,4 +669,83 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
 
     controller.dispose()
   }, 30_000)
+
+  it('P13 Phase E-1回帰: ボット決断待ち中もsolveProgressが複数回・単調に更新される(以前は0%のまま固まっていた)', async () => {
+    // userSeat=1(ヒーローIP)にすることで、ターンのfirstToAct=0(ボット側)を
+    // ボット決断として捕まえる(P9-4のrefineProgressテストと同じ「providerをゲートで
+    // 止めてprogress()だけ差し替える」手法をready自体に適用する)。
+    const rng = fixedRng([1e-9])
+    const waiter = createWaiter()
+    let callIdx = 0
+    let releaseReady: (() => void) | null = null
+    let solveProgressValue = 0
+    const gate = new Promise<void>((resolve) => {
+      releaseReady = resolve
+    })
+    const baseFactory = makeFactory()
+    const spyFactory: NodeProviderFactory = {
+      forFlop: (s, b) => baseFactory.forFlop(s, b),
+      forLiveStreet: (input: StreetSolveInput) => {
+        callIdx++
+        const real = baseFactory.forLiveStreet(input) // in-processは呼び出し時点で既に同期的に解いている
+        if (callIdx !== 1) return real // 1回目=ターンのみ計装
+        let stillSolving = true
+        const gatedReady = gate.then(() => {
+          stillSolving = false
+        })
+        return {
+          ...real,
+          ready: gatedReady,
+          progress: () => (stillSolving ? { fraction: solveProgressValue } : real.progress()),
+        }
+      },
+      dispose: () => baseFactory.dispose(),
+    }
+    const controller = new FullHandController({
+      scenario,
+      flop,
+      flopSolution,
+      userSeat: 1,
+      rng,
+      providerFactory: spyFactory,
+      onUpdate: waiter.onUpdate,
+      onError: (err) => { throw err },
+    })
+    controller.start()
+
+    let snap = await waiter.waitForPause()
+    expect(snap.street).toBe('flop')
+    controller.chooseAction('check')
+    // ターンはボット(OOP)が先手のためユーザーの手番は来ない。botDecidingで止まったまま
+    // gateが解放されるまで待つ(waitForPauseはuserTurn/overでしか解決しないため使わない)。
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    expect(waiter.latest?.phase).toBe('botDeciding')
+    expect(waiter.latest?.street).toBe('turn')
+    expect(waiter.latest?.solveProgress).toBeCloseTo(0, 5)
+
+    const updatesBefore = waiter.updates.length
+    solveProgressValue = 0.3
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    solveProgressValue = 0.7
+    await new Promise((resolve) => setTimeout(resolve, 250))
+
+    // ポーリング(200ms間隔)により、phase遷移を挟まずとも複数回emitされ、
+    // solveProgressが単調に更新されている。
+    const botDecidingUpdates = waiter.updates.slice(updatesBefore).filter((u) => u.phase === 'botDeciding' && u.street === 'turn')
+    expect(botDecidingUpdates.length).toBeGreaterThan(1)
+    const progressValues = botDecidingUpdates.map((u) => u.solveProgress)
+    for (let i = 1; i < progressValues.length; i++) {
+      expect(progressValues[i]!).toBeGreaterThanOrEqual(progressValues[i - 1]!)
+    }
+    expect(progressValues[progressValues.length - 1]).toBeCloseTo(0.7, 5)
+
+    releaseReady!()
+    snap = await waiter.waitForPause()
+    while (snap.phase !== 'over') {
+      controller.chooseAction('check')
+      snap = await waiter.waitForPause()
+    }
+
+    controller.dispose()
+  }, 30_000)
 })

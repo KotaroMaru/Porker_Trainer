@@ -61,7 +61,20 @@ function handleGetNodes(req: Extract<WorkerRequest, { kind: 'getNodes' }>): void
   }
 }
 
-function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>): void {
+function yieldToWorkerEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+/**
+ * P13 Phase E-2: 進捗の送出頻度をexploitability計測(checkEveryIterations、重い)から
+ * 切り離す。ターンは50反復中checkEvery=25では2回しか進捗が動かなかった(ユーザー報告の
+ * 「解析0%のまま急に完了する」の一因)。exploitability値そのものはprogress messageの
+ * 表示側(workerProviderFactory.ts)では使われない(iterationsRunのみ使用)ため、
+ * 計測していない間は直近の値を使い回して安全に頻度だけ上げられる。
+ */
+const PROGRESS_POST_EVERY_ITERATIONS = 5
+
+async function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>): Promise<void> {
   cancelledRequests.delete(req.requestId)
   const { requestId } = req
   const startTime = performance.now()
@@ -103,13 +116,21 @@ function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>)
     while (session.iterationsRun < maxIterations) {
       const current = session.iterationsRun
       const nextCheckpoint = Math.min(Math.ceil((current + 1) / checkEvery) * checkEvery, maxIterations)
-      session.advance(nextCheckpoint - current)
+      const nextProgressPost = Math.min(current + PROGRESS_POST_EVERY_ITERATIONS, maxIterations)
+      const nextStop = Math.min(nextCheckpoint, nextProgressPost)
+      session.advance(nextStop - current)
+
       if (session.iterationsRun % checkEvery === 0 || session.iterationsRun === maxIterations) {
         exploitability = session.measureExploitability()
-        const msg: WorkerResponse = { kind: 'progress', requestId, iterationsRun: session.iterationsRun, exploitability }
-        self.postMessage(msg)
-        if (exploitability < targetExploitability || cancelledRequests.has(requestId)) break
       }
+      const msg: WorkerResponse = { kind: 'progress', requestId, iterationsRun: session.iterationsRun, exploitability }
+      self.postMessage(msg)
+      if (exploitability < targetExploitability || cancelledRequests.has(requestId)) break
+
+      // P13 Phase E-3: 以前はawaitを一切挟まずworkerを完全ブロックしていたため、
+      // ソルブ中は他メッセージ(cancel等)を一切処理できなかった(refineSessionは
+      // 既にyieldToWorkerEventLoop()で対策済み、solveStreetだけ未対応だった)。
+      await yieldToWorkerEventLoop()
     }
 
     const index = buildNodeIndex(tree)
@@ -132,10 +153,6 @@ function handleSolveStreet(req: Extract<WorkerRequest, { kind: 'solveStreet' }>)
   } finally {
     cancelledRequests.delete(requestId)
   }
-}
-
-function yieldToWorkerEventLoop(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0))
 }
 
 async function handleRefineSession(req: Extract<WorkerRequest, { kind: 'refineSession' }>): Promise<void> {
@@ -219,5 +236,5 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     void handleRefineSession(req)
     return
   }
-  handleSolveStreet(req)
+  void handleSolveStreet(req)
 }
