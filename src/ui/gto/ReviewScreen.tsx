@@ -17,6 +17,7 @@ import { RangeHeatGrid } from './RangeHeatGrid'
 import { ResponseRangePanel } from './ResponseRangePanel'
 import { EquityDistChart } from './EquityDistChart'
 import { BlockerPanel } from './BlockerPanel'
+import { BetIntentPanel } from './BetIntentPanel'
 import { CollapsibleSection } from './CollapsibleSection'
 import { actionLabelJa, VERDICT_LABEL, VERDICT_COLOR, STREET_LABEL_JA } from './labels'
 
@@ -207,6 +208,12 @@ export function ReviewScreen() {
         {/* P7-5: ★はEV最大手を指す(採点=頻度基準とは別の軸)ことをEV表の直下でも明示する。 */}
         <div style={{ fontSize: 10, color: 'var(--text-dim)', marginTop: 4 }}>★ = このソルブでの最高EVのアクション</div>
       </div>
+
+      {/* P13 Phase C: ベット種別(バリュー/セミブラフ/ピュアブラフ/プロテクション)+
+          ターゲットハンド表示。ベット系アクションが無い/betTarget===nullなら何も出さない
+          (BetIntentPanel内部で判定)。結論→理由→証拠の流れを崩さないよう、戦略ミックス/
+          EV表の直後・「なぜ」解説カードの直前に置く。 */}
+      {features && <BetIntentPanel decision={decision} features={features} />}
 
       {/* 5. 「なぜ」解説カード(金枠=画面の主役) */}
       <div style={{ border: '2px solid var(--gold)', boxShadow: 'var(--glow-gold)', borderRadius: 10, padding: 14, position: 'relative' }}>
