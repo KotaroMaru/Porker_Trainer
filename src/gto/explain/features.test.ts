@@ -5,7 +5,8 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { classifyBoardTexture, computeSpotFeatures, classifyNoPairShowdownValue, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
+import { classifyBoardTexture, computeSpotFeatures, computeCurrentShowdown, computePrevStreetCheckedThrough, classifyNoPairShowdownValue, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
+import type { HistoryEntry } from '../trainer/reviewBuilder'
 import { classifyDraws } from '../../analysis/outs'
 import { computeSharedRunoutEquity } from './rangeEquity'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
@@ -116,6 +117,61 @@ describe('classifyWeakPairSubtype (P13 Phase B-2い)', () => {
   })
 })
 
+describe('computeCurrentShowdown (P13 Phase D-0-a)', () => {
+  // ボードK♥Q♠2♦、ヒーローA♣A♥(オーバーペア)。全列挙で手計算した期待値と突き合わせる。
+  const board = [card(13, 'h'), card(12, 's'), card(2, 'd')]
+  const heroCombo: [Card, Card] = [card(14, 'c'), card(14, 'h')]
+
+  it('win/tie/loseとtie=0.5加算、weight<=0の除外、ヒーローとのカード重複除外を全列挙で検証する', () => {
+    const villainCombos: [Card, Card][] = [
+      [card(13, 'd'), card(13, 'c')], // KK: セット、ヒーロー負け
+      [card(12, 'd'), card(12, 'c')], // QQ: セット、ヒーロー負け
+      [card(11, 'c'), card(10, 'd')], // JT: ハイカードK、ヒーロー勝ち(AA>ハイカード)
+      [card(14, 'd'), card(14, 's')], // AA: 完全タイ(残りのA2枚)
+      [card(9, 'c'), card(8, 'd')], // 重み0、集計から除外されるべき
+      [card(14, 'c'), card(5, 'h')], // ヒーローのA♣と重複、除外されるべき
+    ]
+    const villainWeights = [1, 1, 1, 1, 0, 1]
+
+    const result = computeCurrentShowdown(heroCombo, villainCombos, villainWeights, board)
+
+    // 有効な母集団はKK/QQ/JT/AAの4コンボ(重み0とカード重複を除く)。
+    // win=JT(1)、tie=AA(1)、lose=KK,QQ(2) → heroEquity=(1+1*0.5)/4=0.375、heroAheadPct=1/4*100=25。
+    expect(result.heroEquity).toBeCloseTo(0.375, NUMERIC_TOLERANCE_DIGITS)
+    expect(result.heroAheadPct).toBeCloseTo(25, NUMERIC_TOLERANCE_DIGITS)
+  })
+
+  it('全コンボがヒーローと重複/weight<=0の場合はNaNを返す(0除算にならない)', () => {
+    const result = computeCurrentShowdown(heroCombo, [[card(14, 'd'), card(5, 'h')] as [Card, Card]], [0], board)
+    expect(Number.isNaN(result.heroEquity)).toBe(true)
+    expect(Number.isNaN(result.heroAheadPct)).toBe(true)
+  })
+})
+
+describe('computePrevStreetCheckedThrough (P13 Phase D-0-c)', () => {
+  function entry(street: HistoryEntry['street'], label: string): HistoryEntry {
+    return { street, position: 'BB', label, isUserDecision: false }
+  }
+
+  it('flop決断は直前ストリートが存在しないためnull', () => {
+    expect(computePrevStreetCheckedThrough([entry('flop', 'check')], 'flop')).toBeNull()
+  })
+
+  it('直前ストリート(flop)が全checkならtrue', () => {
+    const history = [entry('flop', 'check'), entry('flop', 'check')]
+    expect(computePrevStreetCheckedThrough(history, 'turn')).toBe(true)
+  })
+
+  it('直前ストリートにcheck以外が混じればfalse', () => {
+    const history = [entry('flop', 'check'), entry('flop', 'bet33')]
+    expect(computePrevStreetCheckedThrough(history, 'turn')).toBe(false)
+  })
+
+  it('直前ストリートの履歴が無ければnull(推測しない)', () => {
+    expect(computePrevStreetCheckedThrough([entry('preflop', 'レイズ 2.5bb')], 'turn')).toBeNull()
+  })
+})
+
 function fixedRng(sequence: number[]): () => number {
   let i = 0
   return () => sequence[Math.min(i++, sequence.length - 1)]
@@ -181,6 +237,10 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.mdf).toBeNull()
       expect(features.potOddsRequiredEq).toBeNull()
       expect(features.blockers.continueCombosReducedPct).toBeNull()
+      // P13 Phase D-0-c: ベットに直面していないのでbettorIsIpはnull、flop決断なので
+      // 直前ストリートが存在せずflopCheckedThroughもnull。
+      expect(features.streetStructure.bettorIsIp).toBeNull()
+      expect(features.streetStructure.flopCheckedThrough).toBeNull()
     })
 
     it('eqPercentileInRangeは0〜100の範囲、equityBucketsの合計は約100%', () => {
@@ -374,6 +434,9 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.mdf!).toBeLessThan(1)
       expect(features.potOddsRequiredEq!).toBeGreaterThan(0)
       expect(features.potOddsRequiredEq!).toBeLessThan(1)
+      // P13 Phase D-0-c: buildFacingBetSpot()はuserSeat=1(ヒーローIP)なので、
+      // ヒーローに直面しているベットの主(villain)はOOP=bettorIsIpはfalse。
+      expect(features.streetStructure.bettorIsIp).toBe(false)
     })
 
     it('foldを含む応答はterminal:false・fold以外(call/コール締め)はresponsesに現れない', () => {
@@ -499,6 +562,28 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       // 例示は「ハンド単位で集約・降順ソート済み」のblockedHands先頭と一致する(旧実装は
       // コンボ単位の未重複配列から作っていたため「AKo, AKo, AKs」のように重複していた)。
       expect(examples).toEqual(features.blockers.valueBlockedHands.slice(0, examples.length).map((h) => h.hand))
+    })
+
+    it('P13 Phase D-0-b: バリュー側とブラフ側は排他的なエクイティ帯を見るため、合計ブロック量が全体を超えない', () => {
+      const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+      const chosenLabel = spot.decodedNode.actionLabels[0]
+      const grading = applyUserAction(spot, chosenLabel)
+      const review = buildReview(spot, grading, chosenLabel)
+      const features = computeSpotFeatures(review, 0)
+
+      expect(features.blockers.bluffCombosReducedPct).toBeGreaterThanOrEqual(0)
+      expect(features.blockers.bluffCombosReducedPct).toBeLessThanOrEqual(100)
+      // ブラフ側の例示もハンド単位で重複しない(B-1と同じ不変条件)。
+      const bluffHands = features.blockers.bluffBlockedHands.map((h) => h.hand)
+      expect(new Set(bluffHands).size).toBe(bluffHands.length)
+
+      // バリュー側(エクイティ>=0.66)とブラフ側(エクイティ<=0.34)は排他的なコンボ集合を見るため、
+      // 両者が「ブロックした」と数えるコンボ(=ヒーローの手と重複するコンボ)同士も重複しない。
+      const valueBlockedComboWeight = features.blockers.valueBlockedHands.reduce((s, h) => s + h.comboCount, 0)
+      const bluffBlockedComboWeight = features.blockers.bluffBlockedHands.reduce((s, h) => s + h.comboCount, 0)
+      const decision = review.decisions[0]
+      const totalBlockedCombos = decision.villainCombos.filter((c) => c.some((card) => review.userCombo.some((u) => cardKey(u) === cardKey(card)))).length
+      expect(valueBlockedComboWeight + bluffBlockedComboWeight).toBeLessThanOrEqual(totalBlockedCombos)
     })
   })
 

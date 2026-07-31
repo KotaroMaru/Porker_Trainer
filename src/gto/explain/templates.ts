@@ -10,6 +10,7 @@
 import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
 import { handClassLabelJa, type SpotFeatures } from './features'
+import { selectEvidence, type Evidence } from './evidence'
 
 export interface Explanation {
   /** 結論1行。 */
@@ -32,15 +33,6 @@ const ACTION_LABEL_JA: Record<string, string> = {
 
 function actionJa(label: string): string {
   return ACTION_LABEL_JA[label] ?? label
-}
-
-type ActionCategory = 'bet' | 'check' | 'call' | 'fold'
-
-function actionCategory(label: string): ActionCategory {
-  if (label === 'check') return 'check'
-  if (label === 'call') return 'call'
-  if (label === 'fold') return 'fold'
-  return 'bet' // bet33/bet75/raise55/allinは全て「アグレッシブ」カテゴリとして扱う
 }
 
 /** NaN/undefinedを絶対に文字列化しないための防御的フォーマッタ。引数は0..1の比率。 */
@@ -114,94 +106,27 @@ function buildHandParagraph(features: SpotFeatures): string {
   return base + drawLine
 }
 
-/** 最善アクションに対応するターゲットだけを使い、別サイズの集計を誤って混ぜない。 */
-function bestBetTargetHands(decision: ReviewDecision, features: SpotFeatures, kind: 'value' | 'bluff'): string[] {
-  const best = features.betTarget?.best
-  // 正解時はchosen/bestが同じ内容だが、データがbest側に無いケースにも防御的に対応する。
-  const chosen = decision.chosenLabel === decision.grading.bestLabel ? features.betTarget?.chosen : null
-  const target = best?.forLabel === decision.grading.bestLabel ? best : chosen?.forLabel === decision.grading.bestLabel ? chosen : null
-  const hands = kind === 'value' ? target?.valueTargetHands : target?.bluffTargetHands
-  return (hands ?? []).slice(0, 3).map((entry) => entry.hand).filter((hand) => hand.length > 0)
+/**
+ * P13 Phase D-2: 旧buildReasonParagraphはactionCategory×handClassの巨大if/elseで、
+ * 各分岐が固定の事実セットを無条件に並べていた(該当しない理由を書く/結論と無関係な
+ * 証拠を混ぜる、というユーザー報告バグの根本原因)。selectEvidence()が「その手・その
+ * 局面で事実として成立する証拠」だけを優先度順に返すので、ここでは1証拠=1段落として
+ * 組み立てるだけにする。polarity==='opposes'の証拠は落とさず、「ただし〜」で明示的に
+ * 打ち消して提示する(結論との矛盾を放置しない、外部レビュー対応)。
+ */
+function evidenceToParagraph(evidence: Evidence): string {
+  if (evidence.polarity === 'opposes') {
+    return `ただし、${evidence.textJa}この点は他の根拠と相殺されます。`
+  }
+  return evidence.textJa
 }
 
-function buildBetTargetLine(decision: ReviewDecision, features: SpotFeatures, kind: 'value' | 'bluff'): string {
-  const hands = bestBetTargetHands(decision, features, kind)
-  if (hands.length === 0) return ''
-  return kind === 'value' ? `相手の${hands.join('・')}からバリューを狙います。` : `相手の${hands.join('・')}をフォールドさせるブラフです。`
-}
-
-/** テクスチャが次ストリートの価値・危険度に直結する局面だけ、短く補足する。 */
-function buildTextureLine(features: SpotFeatures, category: ActionCategory): string {
-  const { boardTexture } = features
-  if (category === 'bet' && boardTexture.connected) {
-    return `この${boardTexture.summaryJa}ボードはターン以降にストレートが増えやすく、今のストリートでエクイティを実現する意味もあります。`
+function buildReasonParagraphs(decision: ReviewDecision, features: SpotFeatures): string[] {
+  const evidences = selectEvidence(decision, features)
+  if (evidences.length === 0) {
+    return [`${actionJa(decision.grading.bestLabel)}がこの局面のGTO解です。`]
   }
-  if (category === 'bet' && boardTexture.suitPattern === 'twoTone' && !features.draws.hasFlushDraw) {
-    return `この${boardTexture.summaryJa}では相手にフラッシュドローを与えうるため、ベットで料金を課します。`
-  }
-  if (category === 'check' && boardTexture.paired) {
-    return `この${boardTexture.summaryJa}では相手のトリップスやフルハウスへの発展も意識し、ポットをむやみに膨らませません。`
-  }
-  return ''
-}
-
-function buildReasonParagraph(decision: ReviewDecision, features: SpotFeatures): string {
-  const bestLabel = decision.grading.bestLabel
-  const category = actionCategory(bestLabel)
-  const bestResponse = features.responses.find((r) => r.forLabel === bestLabel)
-
-  if (category === 'bet') {
-    const foldFreq = bestResponse && !bestResponse.terminal ? bestResponse.foldFreq : null
-    const continueEq = bestResponse?.heroEquityVsContinueRange ?? null
-    if (features.handClass === 'MONSTER' || features.handClass === 'STRONG_MADE' || features.handClass === 'MIDDLE') {
-      return (
-        `${features.rangeAdvantage.verdictJa}な状況で、相手の継続レンジに対しても${pctVal((continueEq ?? features.heroComboEquity) * 100)}のエクイティがあるためバリューを稼げます。` +
-        buildBetTargetLine(decision, features, 'value') +
-        (foldFreq !== null ? `相手のフォールド率は${pctFrac(foldFreq)}です。` : '') +
-        buildTextureLine(features, category)
-      )
-    }
-    if (features.handClass === 'STRONG_DRAW' || features.handClass === 'WEAK_DRAW') {
-      return (
-        `完成すれば強い手になるドローで、相手のフォールド率${pctFrac(foldFreq)}に加え、コールされても継続レンジに対して${pctVal((continueEq ?? features.heroComboEquity) * 100)}のエクイティを残すセミブラフです。` +
-        (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしている点も後押しします。` : '') +
-        buildTextureLine(features, category)
-      )
-    }
-    return (
-      `ショーダウン価値の低い手ですが、相手のフォールド率${pctFrac(foldFreq)}を突くブラフとして機能します。` +
-      buildBetTargetLine(decision, features, 'bluff') +
-      (features.blockers.valueCombosReducedPct > 0 ? `相手のバリューハンドを${pctVal(features.blockers.valueCombosReducedPct)}ブロックしています。` : '') +
-      buildTextureLine(features, category)
-    )
-  }
-
-  if (category === 'check') {
-    if (features.handClass === 'MONSTER' || features.handClass === 'STRONG_MADE') {
-      return '強い手ですが、ここでベットしても相手のコール/継続レンジから十分な価値を引き出しにくいため、チェックで相手のベットを誘い、チェックレイズにつなげる方が得です。' + buildTextureLine(features, category)
-    }
-    if (features.handClass === 'AIR' || features.handClass === 'STRONG_DRAW' || features.handClass === 'WEAK_DRAW') {
-      return `無理に攻めずチェックでポットを小さく保ち、次のストリートでエクイティを活かす方針です(${features.nutsAdvantage.verdictJa})。`
-    }
-    return 'ミドル程度の強さで、ベットして良い手にレイズされるリスクを避けつつ、エクイティを守るチェックが優位です(ポットコントロール)。'
-  }
-
-  if (category === 'call') {
-    const req = features.potOddsRequiredEq
-    const equity = features.heroComboEquity
-    if (equity >= (req ?? 0)) {
-      return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(equity * 100)}あり、コールが+EVです。` + (features.mdf !== null ? `このサイズに対する最低ディフェンス頻度は${pctVal(features.mdf * 100)}です。` : '')
-    }
-    return `実際のエクイティは${pctVal(equity * 100)}で単純なポットオッズ上の必要勝率${pctVal((req ?? 0) * 100)}には届きませんが、GTOではレンジ全体の防御を考慮してコールを選びます。` + (features.mdf !== null ? `このサイズに対する最低ディフェンス頻度は${pctVal(features.mdf * 100)}です。` : '')
-  }
-
-  // fold
-  const req = features.potOddsRequiredEq
-  const equity = features.heroComboEquity
-  if (equity < (req ?? 0)) {
-    return `必要勝率${pctVal((req ?? 0) * 100)}に対し実際のエクイティは${pctVal(equity * 100)}しかなく、ブロッカーも十分でないためフォールドが最善です。`
-  }
-  return `実際のエクイティ${pctVal(equity * 100)}はポットオッズ上の必要勝率${pctVal((req ?? 0) * 100)}を満たしていますが、単純なポットオッズだけでは判断できません。相手の継続レンジの強さや今後のストリートでの不利を総合すると、フォールドが優れています。`
+  return evidences.map(evidenceToParagraph)
 }
 
 function buildComparisonParagraph(decision: ReviewDecision, features: SpotFeatures): string | null {
@@ -232,7 +157,7 @@ function buildSameClassLine(features: SpotFeatures): string {
 
 export function buildExplanation(decision: ReviewDecision, features: SpotFeatures): Explanation {
   const headline = buildHeadline(decision)
-  const paragraphs: string[] = [buildHandParagraph(features), buildReasonParagraph(decision, features)]
+  const paragraphs: string[] = [buildHandParagraph(features), ...buildReasonParagraphs(decision, features)]
   const comparison = buildComparisonParagraph(decision, features)
   if (comparison) paragraphs.push(comparison)
   const mixedNote = buildMixedStrategyNote(decision)

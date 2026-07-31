@@ -12,9 +12,11 @@ function card(rank: Card['rank'], suit: Card['suit']): Card {
 function blockers(overrides: Partial<SpotFeatures['blockers']> = {}): SpotFeatures['blockers'] {
   return {
     valueCombosReducedPct: 22,
+    bluffCombosReducedPct: 0,
     continueCombosReducedPct: null,
     blockedExamples: [],
     valueBlockedHands: [],
+    bluffBlockedHands: [],
     continueBlockedHands: null,
     ...overrides,
   }

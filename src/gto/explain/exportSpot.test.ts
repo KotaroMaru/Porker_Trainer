@@ -73,6 +73,15 @@ describe('buildSpotMarkdown (実.binフィクスチャによる統合テスト)'
     expect(md).toContain(explanation.sameClassLine)
     expect(md).not.toContain('NaN')
     expect(md).not.toContain('undefined')
+
+    // P13 Phase D-3: 「根拠」セクションがselectEvidence()の出力から組み立てられ、
+    // 生の数値表(特徴量)とは別セクションとして出る。ブロッカーは方向性を主張せず
+    // バリュー側・ブラフ側の両方を数値のまま示す(fold文脈での一方的な表示バグの再発防止)。
+    expect(md).toContain('## 根拠')
+    expect(md).toContain('### この結論の根拠')
+    expect(md).toContain('ブロッカー(バリュー側)')
+    expect(md).toContain('ブロッカー(ブラフ/弱いハンド側)')
+    expect(md).toContain('現時点の勝率(改善なし)')
   })
 
   it('両者のレンジ表記にはボードで使われたカードやscored freqが含まれ、GTO戦略表はアクション数分の行を持つ', () => {

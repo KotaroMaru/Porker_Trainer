@@ -8,6 +8,7 @@ import type { Combo } from '../../analysis/range'
 import { cardLabel } from '../../engine/deck'
 import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
 import { handClassLabelJa, type SpotFeatures } from './features'
+import { selectEvidence } from './evidence'
 import type { Explanation } from './templates'
 
 const ACTION_LABEL_JA: Record<string, string> = {
@@ -61,18 +62,43 @@ function buildStrategyTable(decision: ReviewDecision): string {
   return ['| アクション | 頻度 | EV |', '|---|---|---|', ...rows].join('\n')
 }
 
+/**
+ * P13 Phase D-3: 生の数値表(外部AIが独自に検証できるよう残す)。以前はブロッカーを
+ * 「相手のバリューコンボをX%ブロック」という一方的な言い回しで出しており、fold文脈でも
+ * 無条件に表示されるため「じゃあコールでは?」と読み手が誤誘導される原因になっていた
+ * (ユーザー報告)。ここでは方向性を主張せず、バリュー側・ブラフ側の両方を数値のまま示す。
+ * 実際の「この数値がどちらへの根拠になるか」の判断は下の「根拠」セクション
+ * (selectEvidence())に委ねる。
+ */
 function buildFeaturesSection(features: SpotFeatures | null): string {
   if (!features) return '(計算中、または未計算)'
   const lines: string[] = [
     `- ハンドクラス: ${handClassLabelJa(features.handClass, features.noPairShowdownValue, features.weakPairSubtype)}`,
-    `- 実質エクイティ: ${pct(features.heroComboEquity)}(レンジ内上位${Math.round(100 - features.eqPercentileInRange)}%相当)`,
+    `- 最終エクイティ(残りストリートの改善込み): ${pct(features.heroComboEquity)}(レンジ内上位${Math.round(100 - features.eqPercentileInRange)}%相当)`,
+    `- 現時点の勝率(改善なし): ${pct(features.currentShowdown.heroEquity)}(相手レンジのうち現時点で優っている割合 ${features.currentShowdown.heroAheadPct.toFixed(0)}%)`,
     `- レンジ優位: ${features.rangeAdvantage.verdictJa}(自分平均${pct(features.rangeAdvantage.heroAvg)} / 相手平均${pct(features.rangeAdvantage.villainAvg)})`,
     `- ナッツ優位: ${features.nutsAdvantage.verdictJa}(自分${features.nutsAdvantage.heroTopPct.toFixed(0)}% / 相手${features.nutsAdvantage.villainTopPct.toFixed(0)}%)`,
-    `- ブロッカー: 相手のバリューコンボを${features.blockers.valueCombosReducedPct.toFixed(0)}%ブロック` + (features.blockers.blockedExamples.length > 0 ? `(例: ${features.blockers.blockedExamples.join(', ')})` : ''),
+    `- ブロッカー(バリュー側): 相手のバリューコンボを${features.blockers.valueCombosReducedPct.toFixed(0)}%ブロック` +
+      (features.blockers.blockedExamples.length > 0 ? `(例: ${features.blockers.blockedExamples.join(', ')})` : ''),
+    `- ブロッカー(ブラフ/弱いハンド側): ${features.blockers.bluffCombosReducedPct.toFixed(0)}%ブロック`,
     `- SPR: ${features.sprBucket.spr.toFixed(1)}(${features.sprBucket.labelJa})`,
   ]
   if (features.mdf !== null) lines.push(`- MDF: ${pct(features.mdf)}`)
   if (features.potOddsRequiredEq !== null) lines.push(`- 必要勝率(ポットオッズ): ${pct(features.potOddsRequiredEq)}`)
+  return lines.join('\n')
+}
+
+/** P13 Phase D-3: selectEvidence()の出力を「この結論の根拠」「打ち消し要因」に分けて出力する。 */
+function buildEvidenceSection(decision: ReviewDecision | null, features: SpotFeatures | null): string {
+  if (!decision || !features) return '(計算中、または未計算)'
+  const evidences = selectEvidence(decision, features)
+  if (evidences.length === 0) return '(この決断向けの証拠は選定されませんでした)'
+  const supporting = evidences.filter((e) => e.polarity !== 'opposes')
+  const opposing = evidences.filter((e) => e.polarity === 'opposes')
+  const lines: string[] = ['### この結論の根拠', ...(supporting.length > 0 ? supporting.map((e) => `- ${e.textJa}`) : ['(該当なし)'])]
+  if (opposing.length > 0) {
+    lines.push('', '### 打ち消し要因(結論には織り込み済み)', ...opposing.map((e) => `- ${e.textJa}`))
+  }
   return lines.join('\n')
 }
 
@@ -127,8 +153,11 @@ export function buildSpotMarkdown(review: ReviewData, decisionIdx: number, featu
     `### 相手側`,
     summarizeRange(decision.villainCombos, decision.villainWeights),
     '',
-    '## 特徴量',
+    '## 特徴量(生の数値、外部AIによる独自検証用)',
     buildFeaturesSection(features),
+    '',
+    '## 根拠',
+    buildEvidenceSection(decision, features),
     '',
     '## 解説',
     buildExplanationSection(explanation),

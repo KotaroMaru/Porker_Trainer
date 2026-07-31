@@ -19,17 +19,19 @@ function buildFeatures(handClass: HandStrength, responses: ActionResponseSummary
     weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0, ...draws },
     heroComboEquity: 0.5,
+    currentShowdown: { heroEquity: 0.5, heroAheadPct: 50 },
     eqPercentileInRange: 50,
     rangeAdvantage: { heroAvg: 0.5, villainAvg: 0.5, verdictJa: '互角' },
     nutsAdvantage: { heroTopPct: 10, villainTopPct: 10, verdictJa: '互角' },
     equityBuckets: [],
     responses,
-    blockers: { valueCombosReducedPct: 0, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], continueBlockedHands: null },
+    blockers: { valueCombosReducedPct: 0, bluffCombosReducedPct: 0, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
     betTarget: null,
     mdf: null,
     potOddsRequiredEq: null,
     sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
     sameClass: { classJa: '', comboCount: 0, actionMix: [] },
+    streetStructure: { flopCheckedThrough: null, bettorIsIp: null },
   }
 }
 

@@ -6,13 +6,14 @@
 import type { Card } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
 import { cardKey } from '../../engine/deck'
+import { evaluate } from '../../engine/evaluator'
 import { classifyHandStrength, type HandStrength } from '../../advisor/postflop'
 import { classifyDraws } from '../../analysis/outs'
 import { requiredEquity } from '../../analysis/potOdds'
 import { computeSharedRunoutEquity } from './rangeEquity'
 import { updateRangeWeights } from '../trainer/rangeTracker'
 import { buildComboIndexMapFromCombos, lookupComboIndex } from '../trainer/comboIndex'
-import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
+import { handStrFromCombo, type ReviewData, type ReviewDecision, type HistoryEntry, type Street } from '../trainer/reviewBuilder'
 import type { DecodedNode } from '../loader/binaryFormat'
 
 export const HAND_CLASS_JA: Record<HandStrength, string> = {
@@ -138,6 +139,13 @@ export interface SpotFeatures {
   weakPairSubtype: WeakPairSubtype | null
   draws: ReturnType<typeof classifyDraws>
   heroComboEquity: number
+  /**
+   * P13 Phase D-0-a: heroComboEquityは残りストリートの改善込みの最終エクイティのため、
+   * 「エクイティは必要勝率を超えているのに何故フォールドか」を説明できない
+   * (改善分が混ざっているため)。currentShowdownはランアウトを引かず、現在のボードの
+   * 完成手だけで相手レンジと突き合わせた「改善なしの勝率」。
+   */
+  currentShowdown: { heroEquity: number; heroAheadPct: number }
   /** 0-100。自分のレンジ内で加重した実手札のエクイティ順位(高いほど強い側)。 */
   eqPercentileInRange: number
   rangeAdvantage: { heroAvg: number; villainAvg: number; verdictJa: string }
@@ -147,9 +155,12 @@ export interface SpotFeatures {
   responses: ActionResponseSummary[]
   blockers: {
     valueCombosReducedPct: number
+    /** P13 Phase D-0-b: バリュー側と対称なしきい値以下(明確に劣っている側)のブロック率。 */
+    bluffCombosReducedPct: number
     continueCombosReducedPct: number | null
     blockedExamples: string[]
     valueBlockedHands: BlockedHand[]
+    bluffBlockedHands: BlockedHand[]
     continueBlockedHands: BlockedHand[] | null
   }
   /** chosen/bestの少なくとも一方にfoldを含む応答ノードがある場合のみ非null。 */
@@ -158,6 +169,16 @@ export interface SpotFeatures {
   potOddsRequiredEq: number | null
   sprBucket: { spr: number; labelJa: string }
   sameClass: { classJa: string; comboCount: number; actionMix: { label: string; freq: number }[] }
+  /**
+   * P13 Phase D-0-c: review.historyから導出する直前ストリートの構造。判定に必要な
+   * 履歴が揃わない(前のストリートが存在しない/ベットに直面していない等)場合はnull。
+   */
+  streetStructure: {
+    /** 直前ストリートの全アクションがcheckだったか。flop決断(前ストリート無し)ではnull。 */
+    flopCheckedThrough: boolean | null
+    /** 現在直面しているベットの主(villain)がIPか。ベットに直面していない場合はnull。 */
+    bettorIsIp: boolean | null
+  }
 }
 
 const NUTS_EQUITY_THRESHOLD = 0.8
@@ -342,19 +363,18 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
   return { responses, betTargets }
 }
 
-function computeBlockedValuePct(
-  villainCombos: readonly Combo[],
-  weights: readonly number[],
-  villainEquity: Float64Array,
-  userCombo: Combo,
-  threshold: number,
-): { pct: number; blockedExamples: string[]; blockedHands: BlockedHand[] } {
+/**
+ * P13 Phase D-0-b: 元はvillainEquity>=しきい値(バリュー側)専用だったcomputeBlockedValuePctを、
+ * aggregateTargetHands(:274)と同じ述語パターンへ一般化した。呼び出し側がバリュー側/
+ * ブラフ側それぞれのeligibleを渡す。
+ */
+function computeBlockedPct(villainCombos: readonly Combo[], weights: readonly number[], userCombo: Combo, eligible: (index: number) => boolean): { pct: number; blockedExamples: string[]; blockedHands: BlockedHand[] } {
   const userKeys = new Set(userCombo.map(cardKey))
   let total = 0
   let blocked = 0
   const byHand = new Map<string, { comboCount: number; weight: number }>()
   for (let i = 0; i < villainCombos.length; i++) {
-    if (weights[i] <= 0 || Number.isNaN(villainEquity[i]) || villainEquity[i] < threshold) continue
+    if (weights[i] <= 0 || !eligible(i)) continue
     total += weights[i]
     const collides = villainCombos[i].some((c) => userKeys.has(cardKey(c)))
     if (collides) {
@@ -377,6 +397,44 @@ function computeBlockedValuePct(
     blockedExamples: blockedHands.slice(0, 3).map((h) => h.hand),
     blockedHands,
   }
+}
+
+/**
+ * P13 Phase D-0-a: 現在のボードだけで(ランアウトを引かず)ヒーローの完成手と相手各コンボの
+ * 完成手を突き合わせた「改善なしの勝率」。tie率は0.5として加算する。相手コンボがヒーローの
+ * カードと重複する場合(データ上の異常系を含め防御的に)そのコンボは分母から除外する。
+ */
+export function computeCurrentShowdown(heroCombo: Combo, villainCombos: readonly Combo[], villainWeights: readonly number[], board: readonly Card[]): { heroEquity: number; heroAheadPct: number } {
+  const heroKeys = new Set(heroCombo.map(cardKey))
+  const heroScore = evaluate([...heroCombo, ...board]).score
+  let winW = 0
+  let tieW = 0
+  let totalW = 0
+  for (let i = 0; i < villainCombos.length; i++) {
+    const w = villainWeights[i]
+    if (w <= 0) continue
+    if (villainCombos[i].some((c) => heroKeys.has(cardKey(c)))) continue
+    const villainScore = evaluate([...villainCombos[i], ...board]).score
+    totalW += w
+    if (heroScore > villainScore) winW += w
+    else if (heroScore === villainScore) tieW += w
+  }
+  return {
+    heroEquity: totalW > 0 ? (winW + tieW * 0.5) / totalW : NaN,
+    heroAheadPct: totalW > 0 ? (winW / totalW) * 100 : NaN,
+  }
+}
+
+/**
+ * P13 Phase D-0-c: historyから、streetの直前ストリートが全checkで終わったかを導出する。
+ * 前のストリートが存在しない(flop決断)場合はnull(推測で書かない、というplanの方針)。
+ */
+export function computePrevStreetCheckedThrough(history: readonly HistoryEntry[], street: ReviewDecision['street']): boolean | null {
+  const prevStreet: Street | null = street === 'turn' ? 'flop' : street === 'river' ? 'turn' : null
+  if (!prevStreet) return null
+  const entries = history.filter((h) => h.street === prevStreet)
+  if (entries.length === 0) return null
+  return entries.every((h) => h.label === 'check')
 }
 
 const SPR_LOW = 3
@@ -457,12 +515,20 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const nodeContext = computeNodeContext(decision)
 
-  const { pct: valueCombosReducedPct, blockedExamples, blockedHands: valueBlockedHands } = computeBlockedValuePct(
+  const currentShowdown = computeCurrentShowdown(userCombo, decision.villainCombos, decision.villainWeights, board)
+
+  const BLUFF_BLOCK_EQUITY_THRESHOLD = 1 - VALUE_EQUITY_THRESHOLD // 0.34: バリュー側(0.66)と対称な「明確に劣っている」しきい値
+  const { pct: valueCombosReducedPct, blockedExamples, blockedHands: valueBlockedHands } = computeBlockedPct(
     decision.villainCombos,
     decision.villainWeights,
-    rangeEq.villainEquity,
     userCombo,
-    VALUE_EQUITY_THRESHOLD,
+    (i) => !Number.isNaN(rangeEq.villainEquity[i]) && rangeEq.villainEquity[i] >= VALUE_EQUITY_THRESHOLD,
+  )
+  const { pct: bluffCombosReducedPct, blockedHands: bluffBlockedHands } = computeBlockedPct(
+    decision.villainCombos,
+    decision.villainWeights,
+    userCombo,
+    (i) => !Number.isNaN(rangeEq.villainEquity[i]) && rangeEq.villainEquity[i] <= BLUFF_BLOCK_EQUITY_THRESHOLD,
   )
 
   let continueCombosReducedPct: number | null = null
@@ -480,7 +546,12 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
           nonFoldFreqPerCombo.push(1 - foldF)
         }
         const continueWeights = updateRangeWeights([...decision.villainWeights], nonFoldFreqPerCombo)
-        const continueBlockers = computeBlockedValuePct(decision.villainCombos, continueWeights, rangeEq.villainEquity, userCombo, VALUE_EQUITY_THRESHOLD)
+        const continueBlockers = computeBlockedPct(
+          decision.villainCombos,
+          continueWeights,
+          userCombo,
+          (i) => !Number.isNaN(rangeEq.villainEquity[i]) && rangeEq.villainEquity[i] >= VALUE_EQUITY_THRESHOLD,
+        )
         continueCombosReducedPct = continueBlockers.pct
         continueBlockedHands = continueBlockers.blockedHands
       }
@@ -499,6 +570,14 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const sameClass = computeSameClass(decision, board, handClass)
 
+  // P13 Phase D-0-c: bettorIsIpは「villainが今直面させているベットの主か」であり、
+  // villainのIP/OOPはハンド全体で固定(decision.seatはヒーローの席=0:OOP/1:IP)なので、
+  // ベットに直面している(facingBet)ときのみvillain側の席から機械的に決まる。
+  const streetStructure = {
+    flopCheckedThrough: computePrevStreetCheckedThrough(review.history, decision.street),
+    bettorIsIp: nodeContext.kind === 'facingBet' ? decision.seat === 0 : null,
+  }
+
   return {
     nodeContext,
     boardTexture,
@@ -507,16 +586,18 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     weakPairSubtype,
     draws,
     heroComboEquity,
+    currentShowdown,
     eqPercentileInRange,
     rangeAdvantage,
     nutsAdvantage,
     equityBuckets,
     responses,
-    blockers: { valueCombosReducedPct, continueCombosReducedPct, blockedExamples, valueBlockedHands, continueBlockedHands },
+    blockers: { valueCombosReducedPct, bluffCombosReducedPct, continueCombosReducedPct, blockedExamples, valueBlockedHands, bluffBlockedHands, continueBlockedHands },
     betTarget,
     mdf,
     potOddsRequiredEq,
     sprBucket,
     sameClass,
+    streetStructure,
   }
 }
