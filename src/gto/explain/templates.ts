@@ -132,10 +132,14 @@ export function renderClaim(claim: Claim): string {
       const kind = claimString(claim, 'kind') as keyof typeof BET_PROFILE_LABEL_JA
       const continueEq = claimNumber(claim, 'continueEquityPct')
       const foldFreq = claimNumber(claim, 'foldFreqPct')
-      if (kind === 'value') text = `${BET_PROFILE_LABEL_JA[kind]}型で、相手の継続レンジに対するエクイティは${continueEq.toFixed(0)}%です。`
-      else if (kind === 'protection') text = `${BET_PROFILE_LABEL_JA[kind]}型です。現時点のショーダウン価値があり、相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
-      else if (kind === 'semiBluff') text = `${BET_PROFILE_LABEL_JA[kind]}型で、通常またはバックドアのドローがあります。相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
-      else text = `${BET_PROFILE_LABEL_JA.pureBluff}型です。現時点のショーダウン価値とドローが乏しく、相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
+      const observations = [
+        Number.isFinite(continueEq) ? `継続レンジへのエクイティ${continueEq.toFixed(0)}%` : null,
+        Number.isFinite(foldFreq) ? `観測フォールド率${foldFreq.toFixed(0)}%` : null,
+      ].filter((value) => value !== null).join('、')
+      if (kind === 'value') text = `${BET_PROFILE_LABEL_JA[kind]}型です。${observations}。`
+      else if (kind === 'protection') text = `${BET_PROFILE_LABEL_JA[kind]}型で、現時点のショーダウン価値があります。${observations}。`
+      else if (kind === 'semiBluff') text = `${BET_PROFILE_LABEL_JA[kind]}型で、通常またはバックドアのドローがあります。${observations}。`
+      else text = `${BET_PROFILE_LABEL_JA.pureBluff}型で、現時点のショーダウン価値とドローが乏しい状態です。${observations}。`
       break
     }
     case 'classBaseline': {
@@ -156,7 +160,7 @@ export function renderClaim(claim: Claim): string {
       text = `相手の応答戦略では${claimString(claim, 'hands')}がフォールド側に多く配分されています。`
       break
     case 'checkShowdown':
-      text = `現時点で相手レンジの${claimNumber(claim, 'aheadPct').toFixed(0)}%に勝っており、チェック後もショーダウン価値を残せます。`
+      text = `SDV水準は${claimString(claim, 'sdvLevel')}で、現時点で相手レンジの${claimNumber(claim, 'aheadPct').toFixed(0)}%に勝っており、チェック後もショーダウン価値を残せます。`
       break
     case 'checkDraw':
       text = `${claimString(claim, 'draws')}があり、チェック後のランアウトでも改善余地があります。`

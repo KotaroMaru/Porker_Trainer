@@ -18,13 +18,17 @@ import { applyUserAction } from '../trainer/gameFlow'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
 import { buildStreetTree } from '../tree/actionTree'
 import type { FlopDef, Scenario } from '../types'
-import { selectClaims } from './evidence'
+import { selectClaims, type Claim } from './evidence'
 import { computeSpotFeatures } from './features'
-import { interpretSpot } from './interpretation'
-import { buildExplanation } from './templates'
+import { interpretSpot, type SpotInterpretation } from './interpretation'
+import { buildExplanation, renderClaim, type Explanation } from './templates'
+import type { ReviewData } from '../trainer/reviewBuilder'
+import type { SpotFeatures } from './features'
 
 const ROTATING_FLOPS = ['7h7sKd', 'AsQsJs', '5s4d3h'] as const
-const SAMPLE_PER_NODE = 3
+// 通常CIは全17シナリオ×3ノード×1コンボ+実bin固定ケースで負荷を抑える。
+// P14_AUDIT_FULL=1 では各ノード3コンボ(本実装時182スポット)を横断する。
+const SAMPLE_PER_NODE = process.env.P14_AUDIT_FULL === '1' ? 3 : 1
 const PATHS: string[][] = [[], ['check'], ['bet33']]
 
 interface AuditSpotResult {
@@ -40,6 +44,16 @@ interface AuditSpotResult {
   evidenceCount: number
   valueTargetCount: number
   deltaPp: number
+  claimNumberMismatch: string[]
+  forbiddenIntent: boolean
+}
+
+interface ExactAnalysis {
+  review: ReviewData
+  features: SpotFeatures
+  interpretation: SpotInterpretation
+  claims: Claim[]
+  explanation: Explanation
 }
 
 function walk(root: DecisionNode, labels: string[]): DecisionNode | null {
@@ -68,6 +82,54 @@ function aggregateFrequency(entries: readonly { label: string; freq: number }[],
     const included = facingBet ? entry.label !== 'fold' : entry.label !== 'check'
     return sum + (included ? entry.freq : 0)
   }, 0)
+}
+
+function analyzeCombo(scenario: Scenario, flop: FlopDef, solution: DecodedSolution, path: string[], userCombo: Combo): ExactAnalysis {
+  const tree = buildStreetTree({ potBb: scenario.potBb, effectiveStackBb: scenario.effectiveStackBb, firstToAct: 0 })
+  if (tree.kind !== 'decision') throw new Error('expected decision root')
+  const node = walk(tree, path)
+  const nodeId = path.join('/')
+  const decoded = solution.nodes.get(nodeId)
+  if (!node || !decoded) throw new Error(`missing node ${nodeId}`)
+  const userSeat = decoded.player
+  const otherPool = userSeat === 0 ? solution.ipCombos : solution.oopCombos
+  const userKeys = new Set(userCombo.map(cardKey))
+  const botCombo = otherPool.find((combo) => !combo.some((card) => userKeys.has(cardKey(card))))
+  if (!botCombo) throw new Error('missing non-colliding bot combo')
+  const spot = {
+    scenario,
+    flop,
+    solution,
+    userSeat,
+    userCombo,
+    botCombo,
+    decisionNode: node,
+    decodedNode: decoded,
+    nodeId,
+    botActionsBefore: path.map((label) => ({ nodeId: '', label })),
+    actionsWithAmounts: actionLabelsWithAmounts(node),
+  }
+  const chosenLabel = decoded.actionLabels[0]
+  const grading = applyUserAction(spot, chosenLabel)
+  const review = buildReview(spot, grading, chosenLabel)
+  const features = computeSpotFeatures(review, 0)
+  const interpretation = interpretSpot(review.decisions[0], features)
+  const claims = selectClaims(review.decisions[0], features, interpretation)
+  const explanation = buildExplanation(review.decisions[0], features, interpretation, claims)
+  return { review, features, interpretation, claims, explanation }
+}
+
+function claimNumberMismatches(claims: Claim[]): string[] {
+  const mismatches: string[] = []
+  for (const claim of claims) {
+    const rendered = renderClaim(claim)
+    for (const [key, value] of Object.entries(claim.data)) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) continue
+      const candidates = [value.toFixed(0), value.toFixed(1), value.toFixed(2)]
+      if (!candidates.some((candidate) => rendered.includes(candidate))) mismatches.push(`${claim.id}.${key}=${value}`)
+    }
+  }
+  return mismatches
 }
 
 async function collectResults(cases: { scenario: Scenario; flopStr: string }[]): Promise<AuditSpotResult[]> {
@@ -115,7 +177,8 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
         const features = computeSpotFeatures(review, 0)
         const interpretation = interpretSpot(decision, features)
         const claims = selectClaims(decision, features, interpretation)
-        const explanation = buildExplanation(decision, features, interpretation)
+        const explanation = buildExplanation(decision, features, interpretation, claims)
+        const fullText = [explanation.headline, ...explanation.paragraphs, explanation.sameClassLine].join('\n')
         const betKind = interpretation.betProfile
         const bestTarget = features.targets?.best
         const facingBet = features.nodeContext.kind === 'facingBet'
@@ -127,7 +190,7 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
           seat: decision.seat,
           paragraphs: explanation.paragraphs,
           sameClassLine: explanation.sameClassLine,
-          fullText: [explanation.headline, ...explanation.paragraphs, explanation.sameClassLine].join('\n'),
+          fullText,
           sdvLevel: features.sdvLevel,
           hasAnyDraw: features.draws.hasFlushDraw || features.draws.hasOESD || features.draws.hasGutshot,
           currentAheadPct: features.currentShowdown.heroAheadPct,
@@ -138,6 +201,8 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
               ? (bestTarget?.continueWeakHands.length ?? 0)
               : 0,
           deltaPp: (comboAggFreq - classAggFreq) * 100,
+          claimNumberMismatch: claimNumberMismatches(claims),
+          forbiddenIntent: /主目的|意図|狙い|ピュアブラフです/.test(fullText),
         })
       }
     }
@@ -150,8 +215,11 @@ function quantile(sorted: readonly number[], q: number): number {
   return sorted[Math.min(sorted.length - 1, Math.floor((sorted.length - 1) * q))]
 }
 
-describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
+describe('P14 S5: 解説文の恒久監査(全シナリオ横断)', () => {
   let results: AuditSpotResult[]
+  let reportedA3: ExactAnalysis
+  let ipCheckKqs: ExactAnalysis
+  let bettingAjo: ExactAnalysis
 
   beforeAll(async () => {
     const reported = SCENARIOS.find((scenario) => scenario.id === 'srp_co_vs_btn_cc')
@@ -160,10 +228,31 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
       if (scenario.id !== 'srp_co_vs_btn_cc') cases.push({ scenario, flopStr: ROTATING_FLOPS[index % ROTATING_FLOPS.length] })
     })
     results = await collectResults(cases)
+
+    if (!reported) throw new Error('reported scenario is missing')
+    const flop = FLOPS.find((candidate) => candidate.cards.join('') === '7h7sKd')
+    const solution = await loadSolution(reported.id, '7h7sKd')
+    if (!flop || !solution) throw new Error('reported fixture is missing')
+    const node = solution.nodes.get('check')
+    if (!node || node.player !== 1) throw new Error('reported IP node is missing')
+    const pool = solution.ipCombos
+    const a3 = pool.find((combo) => new Set(combo.map(cardKey)).size === 2 && combo.some((card) => cardKey(card) === '14d') && combo.some((card) => cardKey(card) === '3d'))
+    if (!a3) throw new Error('A3dd is missing')
+    reportedA3 = analyzeCombo(reported, flop, solution, ['check'], a3)
+
+    const kqsCandidates = pool.filter((combo) => handStrFromCombo(combo) === 'KQs')
+    const kqs = kqsCandidates.find((combo) => analyzeCombo(reported, flop, solution, ['check'], combo).review.decisions[0].grading.bestLabel === 'check')
+    if (!kqs) throw new Error('IP check KQs regression combo is missing')
+    ipCheckKqs = analyzeCombo(reported, flop, solution, ['check'], kqs)
+
+    const ajoCandidates = pool.filter((combo) => handStrFromCombo(combo) === 'AJo')
+    const ajo = ajoCandidates.find((combo) => analyzeCombo(reported, flop, solution, ['check'], combo).review.decisions[0].grading.bestLabel !== 'check')
+    if (!ajo) throw new Error('betting AJo regression combo is missing')
+    bettingAjo = analyzeCombo(reported, flop, solution, ['check'], ajo)
   }, 300_000)
 
   it('監査対象と逸脱分布を実データから収集できる', () => {
-    expect(results.length).toBeGreaterThan(100)
+    expect(results.length).toBeGreaterThan(50)
     const absoluteDeltas = results.map((result) => Math.abs(result.deltaPp)).sort((a, b) => a - b)
     const distribution = {
       n: absoluteDeltas.length,
@@ -180,7 +269,7 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     expect(Object.values(distribution).every((value) => value !== undefined && Number.isFinite(value))).toBe(true)
   })
 
-  it('S3移行後: Claimの網羅性とIP/OOPガードにより既知違反を0にする', () => {
+  it('S5完了条件: C1〜C8の既知違反を0にする', () => {
     const violations = {
       c1Label: results.filter((result) => {
         const hand = result.paragraphs[0]?.match(/あなたの手は(.+?)で、/)?.[1]
@@ -206,5 +295,34 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
       c7PureBluffAhead: 0,
       c8InvalidText: 0,
     })
+  })
+
+  it('C9: Claimの全数値が同じClaimの描画文へ埋め込まれる', () => {
+    expect(results.flatMap((result) => result.claimNumberMismatch.map((mismatch) => `${result.where}: ${mismatch}`))).toEqual([])
+  })
+
+  it('C10: ソルバーが示していない意図を断定する語彙を出さない', () => {
+    expect(results.filter((result) => result.forbiddenIntent).map((result) => result.where)).toEqual([])
+  })
+
+  it('実bin回帰: A♦3♦ on 7♥7♠K♦は保護型・ナッツBDFD・非ホイール・+38pp級の外れ値', () => {
+    expect(reportedA3.interpretation.betProfile?.kind).toBe('protection')
+    expect(reportedA3.features.backdoors).toEqual({ flush: { has: true, isNut: true }, straight: { has: false, isWheel: false } })
+    expect(reportedA3.features.comboVsClass.deltaPp).toBeGreaterThan(35)
+    expect(reportedA3.interpretation.deviation.drivers).toEqual(expect.arrayContaining(['blocker', 'backdoor', 'thinSdv']))
+    expect([reportedA3.explanation.headline, ...reportedA3.explanation.paragraphs].join('\n')).not.toMatch(/ホイール|ピュアブラフ/)
+  })
+
+  it('実bin回帰: IPのKQsチェックに実行不能なチェックレイズ提案を出さない', () => {
+    expect(ipCheckKqs.review.decisions[0].seat).toBe(1)
+    expect(ipCheckKqs.review.decisions[0].grading.bestLabel).toBe('check')
+    expect(ipCheckKqs.explanation.paragraphs.join('\n')).not.toMatch(/チェックレイズ|相手のベットを誘い/)
+  })
+
+  it('実bin回帰: AJoのベットを、現時点で35%以上勝つ場合にpureBluff扱いしない', () => {
+    expect(bettingAjo.review.decisions[0].grading.bestLabel).not.toBe('check')
+    if (bettingAjo.features.currentShowdown.heroAheadPct >= 35) {
+      expect(bettingAjo.interpretation.betProfile?.kind).not.toBe('pureBluff')
+    }
   })
 })

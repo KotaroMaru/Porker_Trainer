@@ -42,15 +42,14 @@ function actionCategoryOf(label: string): ActionCategory {
 function pushBetClaims(claims: Claim[], features: SpotFeatures, interpretation: SpotInterpretation): void {
   const profile = interpretation.betProfile
   if (!profile) return
+  const profileData: Claim['data'] = { kind: profile.kind }
+  if (profile.continueEquity !== null) profileData.continueEquityPct = profile.continueEquity * 100
+  if (profile.foldFreq !== null) profileData.foldFreqPct = profile.foldFreq * 100
   claims.push({
     id: 'betProfile',
     polarity: 'supports',
     priority: 110,
-    data: {
-      kind: profile.kind,
-      continueEquityPct: profile.continueEquity === null ? -1 : profile.continueEquity * 100,
-      foldFreqPct: profile.foldFreq === null ? -1 : profile.foldFreq * 100,
-    },
+    data: profileData,
   })
 
   claims.push({
@@ -186,16 +185,19 @@ function pushRaiseRejectionClaim(claims: Claim[], decision: ReviewDecision, feat
   const best = decision.grading.actionBreakdown.find((action) => action.label === decision.grading.bestLabel)
   if (!raise || !best || best.evBb <= raise.evBb) return
   const response = features.responses.find((candidate) => candidate.forLabel === raiseLabel)
+  const data: Claim['data'] = {
+    raiseLabel,
+    raiseEvBb: raise.evBb,
+    evDiffBb: best.evBb - raise.evBb,
+  }
+  if (response?.heroEquityVsContinueRange !== null && response?.heroEquityVsContinueRange !== undefined) {
+    data.continueEquityPct = response.heroEquityVsContinueRange * 100
+  }
   claims.push({
     id: 'raiseRejection',
     polarity: 'opposes',
     priority: 30,
-    data: {
-      raiseLabel,
-      raiseEvBb: raise.evBb,
-      evDiffBb: best.evBb - raise.evBb,
-      continueEquityPct: response?.heroEquityVsContinueRange === null || response?.heroEquityVsContinueRange === undefined ? -1 : response.heroEquityVsContinueRange * 100,
-    },
+    data,
   })
 }
 
