@@ -7,9 +7,9 @@
 import type { Combo } from '../../analysis/range'
 import { cardLabel } from '../../engine/deck'
 import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
-import { handClassLabelJa, type SpotFeatures } from './features'
-import { selectClaims } from './evidence'
-import { interpretSpot } from './interpretation'
+import type { SpotFeatures } from './features'
+import { selectClaims, type Claim } from './evidence'
+import { interpretSpot, nutsAdvantageLabelJa, rangeAdvantageLabelJa, sprLabelJa, type SpotInterpretation } from './interpretation'
 import { renderClaim, type Explanation } from './templates'
 
 const ACTION_LABEL_JA: Record<string, string> = {
@@ -71,18 +71,18 @@ function buildStrategyTable(decision: ReviewDecision): string {
  * 実際の「この数値がどちらへの根拠になるか」の判断は下の「根拠」セクション
  * (selectEvidence())に委ねる。
  */
-function buildFeaturesSection(features: SpotFeatures | null): string {
-  if (!features) return '(計算中、または未計算)'
+function buildFeaturesSection(features: SpotFeatures | null, interpretation: SpotInterpretation | null): string {
+  if (!features || !interpretation) return '(計算中、または未計算)'
   const lines: string[] = [
-    `- ハンドクラス: ${handClassLabelJa(features.handClass, features.sdvLevel, features.weakPairSubtype)}`,
+    `- ハンドクラス: ${interpretation.handDescriptor.classJa}`,
     `- 最終エクイティ(残りストリートの改善込み): ${pct(features.heroComboEquity)}(レンジ内上位${Math.round(100 - features.eqPercentileInRange)}%相当)`,
     `- 現時点の勝率(改善なし): ${pct(features.currentShowdown.heroEquity)}(相手レンジのうち現時点で優っている割合 ${features.currentShowdown.heroAheadPct.toFixed(0)}%)`,
-    `- レンジ優位: ${features.rangeAdvantage.verdictJa}(自分平均${pct(features.rangeAdvantage.heroAvg)} / 相手平均${pct(features.rangeAdvantage.villainAvg)})`,
-    `- ナッツ優位: ${features.nutsAdvantage.verdictJa}(自分${features.nutsAdvantage.heroTopPct.toFixed(0)}% / 相手${features.nutsAdvantage.villainTopPct.toFixed(0)}%)`,
+    `- レンジ優位: ${rangeAdvantageLabelJa(features.rangeAdvantage)}(自分平均${pct(features.rangeAdvantage.heroAvg)} / 相手平均${pct(features.rangeAdvantage.villainAvg)})`,
+    `- ナッツ優位: ${nutsAdvantageLabelJa(features.nutsAdvantage)}(自分${features.nutsAdvantage.heroTopPct.toFixed(0)}% / 相手${features.nutsAdvantage.villainTopPct.toFixed(0)}%)`,
     `- ブロッカー(バリュー側): 相手のバリューコンボを${features.blockers.valueCombosReducedPct.toFixed(0)}%ブロック` +
       (features.blockers.blockedExamples.length > 0 ? `(例: ${features.blockers.blockedExamples.join(', ')})` : ''),
     `- ブロッカー(ブラフ/弱いハンド側): ${features.blockers.bluffCombosReducedPct.toFixed(0)}%ブロック`,
-    `- SPR: ${features.sprBucket.spr.toFixed(1)}(${features.sprBucket.labelJa})`,
+    `- SPR: ${features.sprBucket.spr.toFixed(1)}(${sprLabelJa(features.sprBucket)})`,
   ]
   if (features.mdf !== null) lines.push(`- MDF: ${pct(features.mdf)}`)
   if (features.potOddsRequiredEq !== null) lines.push(`- 必要勝率(ポットオッズ): ${pct(features.potOddsRequiredEq)}`)
@@ -90,9 +90,9 @@ function buildFeaturesSection(features: SpotFeatures | null): string {
 }
 
 /** P13 Phase D-3: selectEvidence()の出力を「この結論の根拠」「打ち消し要因」に分けて出力する。 */
-function buildEvidenceSection(decision: ReviewDecision | null, features: SpotFeatures | null): string {
-  if (!decision || !features) return '(計算中、または未計算)'
-  const claims = selectClaims(decision, features, interpretSpot(decision, features))
+function buildEvidenceSection(decision: ReviewDecision | null, features: SpotFeatures | null, interpretation: SpotInterpretation | null, sharedClaims: Claim[] | null): string {
+  if (!decision || !features || !interpretation) return '(計算中、または未計算)'
+  const claims = sharedClaims ?? selectClaims(decision, features, interpretation)
   if (claims.length === 0) return '(この決断向けの根拠は選定されませんでした)'
   const supporting = claims.filter((claim) => claim.polarity !== 'opposes')
   const opposing = claims.filter((claim) => claim.polarity === 'opposes')
@@ -109,9 +109,17 @@ function buildExplanationSection(explanation: Explanation | null): string {
 }
 
 /** 決断1つ(review.decisions[decisionIdx])を自己完結マークダウンに変換する。 */
-export function buildSpotMarkdown(review: ReviewData, decisionIdx: number, features: SpotFeatures | null, explanation: Explanation | null): string {
+export function buildSpotMarkdown(
+  review: ReviewData,
+  decisionIdx: number,
+  features: SpotFeatures | null,
+  explanation: Explanation | null,
+  sharedInterpretation?: SpotInterpretation | null,
+  sharedClaims?: Claim[] | null,
+): string {
   const decision = review.decisions[decisionIdx]
   if (!decision) throw new Error(`buildSpotMarkdown: no decision at index ${decisionIdx}`)
+  const interpretation = features ? (sharedInterpretation ?? interpretSpot(decision, features)) : null
 
   const boardStr = review.board.map(cardLabel).join(' ')
   const userComboStr = review.userCombo.map(cardLabel).join(' ')
@@ -155,10 +163,10 @@ export function buildSpotMarkdown(review: ReviewData, decisionIdx: number, featu
     summarizeRange(decision.villainCombos, decision.villainWeights),
     '',
     '## 特徴量(生の数値、外部AIによる独自検証用)',
-    buildFeaturesSection(features),
+    buildFeaturesSection(features, interpretation),
     '',
     '## 根拠',
-    buildEvidenceSection(decision, features),
+    buildEvidenceSection(decision, features, interpretation, sharedClaims ?? null),
     '',
     '## 解説',
     buildExplanationSection(explanation),

@@ -371,6 +371,7 @@ describe('useGtoStore', () => {
     expect(state.review?.decisions.length).toBe(1)
     expect(state.reviewFeatures).toEqual([null])
     expect(state.reviewInterpretations).toEqual([null])
+    expect(state.reviewClaims).toEqual([null])
     expect(state.reviewFeaturesStatus).toBe('computing')
     expect(state.activeDecisionIdx).toBe(0)
   })
@@ -389,6 +390,7 @@ describe('useGtoStore', () => {
     expect(state.reviewFeatures[0]).not.toBeNull()
     expect(state.reviewFeatures[0]?.handClass).toBeDefined()
     expect(state.reviewInterpretations[0]?.handDescriptor.classJa).toBeDefined()
+    expect(state.reviewClaims[0]?.length).toBeGreaterThanOrEqual(2)
   })
 
   it('nextSpotでreview/reviewFeatures/reviewFeaturesStatus/activeDecisionIdxがリセットされる', async () => {

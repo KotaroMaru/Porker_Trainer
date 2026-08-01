@@ -26,7 +26,7 @@ function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
 }
 
 export function ReviewScreen() {
-  const { review, reviewSource, reviewFeatures, reviewInterpretations, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand, dailyChallenge, customAnalyzer } =
+  const { review, reviewSource, reviewFeatures, reviewInterpretations, reviewClaims, reviewFeaturesStatus, activeDecisionIdx, setActiveDecisionIdx, saveCurrentReview, nextSpot, closeBookmark, fullHand, dailyChallenge, customAnalyzer } =
     useGtoStore()
   // P11 Phase C: デイリーチャレンジのレビュー中(phase:'reviewing')は、DailyChallengeScreen側が
   // 「次のハンドへ」/「結果を見る」ボタン(dismissDailyReview()経由)を別途表示する。この
@@ -53,12 +53,13 @@ export function ReviewScreen() {
   const decision = review.decisions[activeDecisionIdx]
   const features = reviewFeatures[activeDecisionIdx] ?? null
   const interpretation = reviewInterpretations[activeDecisionIdx] ?? null
-  const explanation = features ? buildExplanation(decision, features, interpretation ?? undefined) : null
+  const claims = reviewClaims[activeDecisionIdx] ?? null
+  const explanation = features ? buildExplanation(decision, features, interpretation ?? undefined, claims ?? undefined) : null
   const { grading } = decision
   const hasMultipleDecisions = review.decisions.length > 1
 
   async function copyMarkdown() {
-    const md = buildSpotMarkdown(review!, activeDecisionIdx, features, explanation)
+    const md = buildSpotMarkdown(review!, activeDecisionIdx, features, explanation, interpretation, claims)
     try {
       await navigator.clipboard.writeText(md)
       setCopied(true)
@@ -214,7 +215,7 @@ export function ReviewScreen() {
           ターゲットハンド表示。ベット系アクションが無い/targets===nullなら何も出さない
           (BetIntentPanel内部で判定)。結論→理由→証拠の流れを崩さないよう、戦略ミックス/
           EV表の直後・「なぜ」解説カードの直前に置く。 */}
-      {features && <BetIntentPanel decision={decision} features={features} />}
+      {features && interpretation && <BetIntentPanel profile={interpretation.betProfile} target={features.targets?.best ?? null} />}
 
       {/* 5. 「なぜ」解説カード(金枠=画面の主役) */}
       <div style={{ border: '2px solid var(--gold)', boxShadow: 'var(--glow-gold)', borderRadius: 10, padding: 14, position: 'relative' }}>

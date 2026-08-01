@@ -16,28 +16,12 @@ import { buildComboIndexMapFromCombos, lookupComboIndex } from '../trainer/combo
 import { handStrFromCombo, type ReviewData, type ReviewDecision, type HistoryEntry, type Street } from '../trainer/reviewBuilder'
 import type { DecodedNode } from '../loader/binaryFormat'
 
-export const HAND_CLASS_JA: Record<HandStrength, string> = {
-  MONSTER: 'モンスター(フルハウス以上)',
-  STRONG_MADE: '強い完成手(フラッシュ/ストレート/トリップス/ツーペア)',
-  MIDDLE: 'ミドル(トップペア以上のワンペア)',
-  WEAK_PAIR: '弱いペア',
-  STRONG_DRAW: '強いドロー(フラッシュ/オープンエンド)',
-  WEAK_DRAW: '弱いドロー(ガットショット)',
-  AIR: 'ノーペア',
-}
-
 export type SdvLevel = 'solid' | 'thin' | 'none'
 
 export function classifySdvLevel(heroAheadPct: number): SdvLevel {
   if (heroAheadPct >= 40) return 'solid'
   if (heroAheadPct >= 25) return 'thin'
   return 'none'
-}
-
-const NO_PAIR_SDV_LABEL_JA: Record<SdvLevel, string> = {
-  solid: 'SDVありのハイカード',
-  thin: 'SDVが薄いハイカード',
-  none: 'SDVなしのハイカード',
 }
 
 /**
@@ -49,23 +33,6 @@ export type WeakPairSubtype = 'bluffCatcher' | 'drawPaired'
 
 export function classifyWeakPairSubtype(draws: ReturnType<typeof classifyDraws>): WeakPairSubtype {
   return draws.hasFlushDraw || draws.hasOESD ? 'drawPaired' : 'bluffCatcher'
-}
-
-const WEAK_PAIR_SUBTYPE_LABEL_JA: Record<WeakPairSubtype, string> = {
-  bluffCatcher: '弱いペア(ブラフキャッチャー型)',
-  drawPaired: '弱いペア(ドロー付き)',
-}
-
-/**
- * features.handClassの表示ラベルを決める。AIR/WEAK_PAIRのみ細分化したラベルへ差し替え、
- * それ以外はHAND_CLASS_JAをそのまま使う。sameClass.classJa(同クラス平均頻度の説明に使う、
- * 細分化前の母集団全体の値)は意図的にこの関数を経由させない(既存テストの契約通り
- * HAND_CLASS_JA[handClass]と一致させる)。
- */
-export function handClassLabelJa(handClass: HandStrength, sdvLevel: SdvLevel, weakPairSubtype: WeakPairSubtype | null): string {
-  if (handClass === 'AIR') return NO_PAIR_SDV_LABEL_JA[sdvLevel]
-  if (handClass === 'WEAK_PAIR' && weakPairSubtype !== null) return WEAK_PAIR_SUBTYPE_LABEL_JA[weakPairSubtype]
-  return HAND_CLASS_JA[handClass]
 }
 
 export type NodeContext = { kind: 'root' } | { kind: 'facingBet'; betAmountBb: number; potBeforeCallBb: number }
@@ -105,12 +72,10 @@ export interface BoardTexture {
   paired: boolean
   /** 全同スート/同スートあり/全て異なるスート、の3区分。 */
   suitPattern: 'monotone' | 'twoTone' | 'rainbow'
-  /** Q以上を含むハイ、最高ランク8-Jのミドル、7以下のロー。 */
-  heightJa: 'ハイ' | 'ミドル' | 'ロー'
+  /** Q以上を含むhigh、最高ランク8-Jのmiddle、7以下のlow。 */
+  height: 'high' | 'middle' | 'low'
   /** 3つの異なるランクが4ランク幅以内に収まる(ホイールのAを1としても判定)か。 */
   connected: boolean
-  /** テンプレートへそのまま渡せる、日本語の短い要約。 */
-  summaryJa: string
 }
 
 export interface ActionTargets {
@@ -158,9 +123,9 @@ export interface SpotFeatures {
   currentShowdown: { heroEquity: number; heroAheadPct: number }
   /** 0-100。自分のレンジ内で加重した実手札のエクイティ順位(高いほど強い側)。 */
   eqPercentileInRange: number
-  rangeAdvantage: { heroAvg: number; villainAvg: number; verdictJa: string }
+  rangeAdvantage: { heroAvg: number; villainAvg: number }
   /** EQ0.80以上を「ナッツ級」とみなした、両者レンジ内の加重割合(%)。 */
-  nutsAdvantage: { heroTopPct: number; villainTopPct: number; verdictJa: string }
+  nutsAdvantage: { heroTopPct: number; villainTopPct: number }
   equityBuckets: EquityBucket[]
   responses: ActionResponseSummary[]
   blockers: {
@@ -177,8 +142,8 @@ export interface SpotFeatures {
   targets: Targets | null
   mdf: number | null
   potOddsRequiredEq: number | null
-  sprBucket: { spr: number; labelJa: string }
-  sameClass: { classJa: string; comboCount: number; actionMix: { label: string; freq: number }[] }
+  sprBucket: { spr: number; bucket: 'low' | 'middle' | 'high' }
+  sameClass: { comboCount: number; actionMix: { label: string; freq: number }[] }
   comboVsClass: ComboVsClass
   /**
    * P13 Phase D-0-c: review.historyから導出する直前ストリートの構造。判定に必要な
@@ -196,7 +161,6 @@ export interface SpotFeatures {
 
 const NUTS_EQUITY_THRESHOLD = 0.8
 const VALUE_EQUITY_THRESHOLD = 0.66
-const ADVANTAGE_TOLERANCE = 0.03
 const VALUE_TARGET_EQUITY_THRESHOLD = 0.5
 
 export function classifyBoardTexture(board: readonly Card[]): BoardTexture {
@@ -215,7 +179,7 @@ export function classifyBoardTexture(board: readonly Card[]): BoardTexture {
   const maxSuitCount = Math.max(...suitCounts.values())
   const suitPattern: BoardTexture['suitPattern'] = maxSuitCount === board.length ? 'monotone' : maxSuitCount >= 2 ? 'twoTone' : 'rainbow'
   const maxRank = Math.max(...board.map((card) => card.rank))
-  const heightJa: BoardTexture['heightJa'] = maxRank >= 12 ? 'ハイ' : maxRank >= 8 ? 'ミドル' : 'ロー'
+  const height: BoardTexture['height'] = maxRank >= 12 ? 'high' : maxRank >= 8 ? 'middle' : 'low'
 
   const uniqueRanks = [...rankCounts.keys()]
   const rankViews = [uniqueRanks, uniqueRanks.includes(14) ? uniqueRanks.map((rank) => (rank === 14 ? 1 : rank)) : uniqueRanks]
@@ -227,16 +191,7 @@ export function classifyBoardTexture(board: readonly Card[]): BoardTexture {
     return false
   })
 
-  const suitPatternJa = suitPattern === 'monotone' ? 'モノトーン' : suitPattern === 'twoTone' ? 'ツートーン' : 'レインボー'
-  const summaryJa = [paired ? 'ペアボード' : null, suitPatternJa, connected ? 'コネクテッド' : 'ドライ'].filter((part) => part !== null).join('・')
-
-  return { paired, suitPattern, heightJa, connected, summaryJa }
-}
-
-function advantageVerdict(heroValue: number, villainValue: number, adjLabel: string): string {
-  if (heroValue > villainValue + ADVANTAGE_TOLERANCE) return `${adjLabel}優位`
-  if (villainValue > heroValue + ADVANTAGE_TOLERANCE) return `${adjLabel}劣位`
-  return '互角'
+  return { paired, suitPattern, height, connected }
 }
 
 function weightedPercentile(equities: Float64Array, weights: readonly number[], target: number): number {
@@ -516,10 +471,10 @@ export function computeComboVsClass(decision: ReviewDecision, sameClass: SpotFea
 const SPR_LOW = 3
 const SPR_HIGH = 6
 
-function sprLabel(spr: number): string {
-  if (spr < SPR_LOW) return `低SPR(<${SPR_LOW})`
-  if (spr <= SPR_HIGH) return `中SPR(${SPR_LOW}-${SPR_HIGH})`
-  return `高SPR(>${SPR_HIGH})`
+function sprBucketOf(spr: number): SpotFeatures['sprBucket']['bucket'] {
+  if (spr < SPR_LOW) return 'low'
+  if (spr <= SPR_HIGH) return 'middle'
+  return 'high'
 }
 
 function computeSameClass(decision: ReviewDecision, board: Card[], handClass: HandStrength): SpotFeatures['sameClass'] {
@@ -541,7 +496,7 @@ function computeSameClass(decision: ReviewDecision, board: Card[], handClass: Ha
     label,
     freq: totalWeight > 0 ? actionSum[a] / totalWeight : 0,
   }))
-  return { classJa: HAND_CLASS_JA[handClass], comboCount, actionMix }
+  return { comboCount, actionMix }
 }
 
 export function computeSpotFeatures(review: ReviewData, decisionIdx: number): SpotFeatures {
@@ -571,7 +526,6 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const rangeAdvantage = {
     heroAvg: rangeEq.heroAvgEquity,
     villainAvg: rangeEq.villainAvgEquity,
-    verdictJa: advantageVerdict(rangeEq.heroAvgEquity, rangeEq.villainAvgEquity, 'レンジ'),
   }
 
   const heroTopPct = weightedTopSharePct(rangeEq.heroEquity, decision.heroWeights, NUTS_EQUITY_THRESHOLD)
@@ -579,7 +533,6 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const nutsAdvantage = {
     heroTopPct,
     villainTopPct,
-    verdictJa: advantageVerdict(heroTopPct, villainTopPct, 'ナッツ'),
   }
 
   const equityBuckets = buildEquityBuckets(rangeEq.heroEquity, decision.heroWeights, rangeEq.villainEquity, decision.villainWeights)
@@ -643,7 +596,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   }
 
   const spr = decision.potBbAtDecision > 0 ? decision.effectiveStackRemainingBb / decision.potBbAtDecision : Infinity
-  const sprBucket = { spr, labelJa: sprLabel(spr) }
+  const sprBucket = { spr, bucket: sprBucketOf(spr) }
 
   const sameClass = computeSameClass(decision, board, handClass)
   const comboVsClass = computeComboVsClass(decision, sameClass, nodeContext)

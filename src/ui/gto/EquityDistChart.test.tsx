@@ -10,8 +10,8 @@ describe('EquityDistChart', () => {
     heroPct: i === 5 ? 40 : 6.67,
     villainPct: i === 3 ? 30 : 7.78,
   }))
-  const rangeAdvantage = { heroAvg: 0.52, villainAvg: 0.48, verdictJa: 'レンジ優位' }
-  const nutsAdvantage = { heroTopPct: 15, villainTopPct: 10, verdictJa: 'ナッツ優位' }
+  const rangeAdvantage = { heroAvg: 0.52, villainAvg: 0.48 }
+  const nutsAdvantage = { heroTopPct: 15, villainTopPct: 10 }
 
   it('レンジ優位/ナッツ優位のverdict行が数値付きで表示される', () => {
     const { container } = render(<EquityDistChart buckets={buckets} rangeAdvantage={rangeAdvantage} nutsAdvantage={nutsAdvantage} />)

@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest'
 import { buildExplanation } from './templates'
-import { HAND_CLASS_JA, type SpotFeatures, type ActionResponseSummary, type NodeContext } from './features'
+import type { SpotFeatures, ActionResponseSummary, NodeContext } from './features'
 import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
 import type { GradeResult, GradeVerdict } from '../trainer/grading'
@@ -92,7 +92,7 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
 
   return {
     nodeContext,
-    boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
+    boardTexture: { paired: false, suitPattern: 'rainbow', height: 'middle', connected: false },
     handClass,
     sdvLevel: handClass === 'AIR' ? 'solid' : 'solid',
     weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
@@ -101,8 +101,8 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
     heroComboEquity: 0.55,
     currentShowdown: { heroEquity: 0.5, heroAheadPct: 45 },
     eqPercentileInRange: 62,
-    rangeAdvantage: { heroAvg: 0.5, villainAvg: 0.48, verdictJa: '互角' },
-    nutsAdvantage: { heroTopPct: 12, villainTopPct: 10, verdictJa: '互角' },
+    rangeAdvantage: { heroAvg: 0.5, villainAvg: 0.48 },
+    nutsAdvantage: { heroTopPct: 12, villainTopPct: 10 },
     equityBuckets: Array.from({ length: 10 }, (_, i) => ({ lo: i * 10, hi: (i + 1) * 10, heroPct: 10, villainPct: 10 })),
     responses,
     blockers: {
@@ -117,8 +117,8 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
     targets: null,
     mdf: kind === 'facingBet' ? 0.6 : null,
     potOddsRequiredEq: kind === 'facingBet' ? 0.33 : null,
-    sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
-    sameClass: { classJa: HAND_CLASS_JA[handClass], comboCount: 10, actionMix: [{ label: bestLabel, freq: 0.7 }, { label: 'check', freq: 0.3 }] },
+    sprBucket: { spr: 4, bucket: 'middle' },
+    sameClass: { comboCount: 10, actionMix: [{ label: bestLabel, freq: 0.7 }, { label: 'check', freq: 0.3 }] },
     comboVsClass: { comboAggFreq: 0.7, classAggFreq: 0.7, deltaPp: 0 },
     streetStructure: { flopCheckedThrough: kind === 'facingBet' ? true : null, bettorIsIp: kind === 'facingBet' ? true : null, villainCheckedToHero: null },
   }
@@ -295,7 +295,7 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
 
     const features: SpotFeatures = {
       nodeContext: { kind: 'root' },
-      boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ハイ', connected: false, summaryJa: 'レインボー・ドライ' },
+      boardTexture: { paired: false, suitPattern: 'rainbow', height: 'high', connected: false },
       handClass: 'AIR', // A♠2♥ on K♥9♠3♦: ノーペア
       sdvLevel: 'none',
       weakPairSubtype: null,
@@ -304,8 +304,8 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       heroComboEquity: 0.22,
       currentShowdown: { heroEquity: 0.22, heroAheadPct: 20 },
       eqPercentileInRange: 40,
-      rangeAdvantage: { heroAvg: 0.5, villainAvg: 0.5, verdictJa: '互角' },
-      nutsAdvantage: { heroTopPct: 5, villainTopPct: 5, verdictJa: '互角' },
+      rangeAdvantage: { heroAvg: 0.5, villainAvg: 0.5 },
+      nutsAdvantage: { heroTopPct: 5, villainTopPct: 5 },
       equityBuckets: [],
       responses: [
         { forLabel: 'check', terminal: false, breakdown: [], foldFreq: 0, heroEquityVsContinueRange: null },
@@ -315,10 +315,8 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       targets: null,
       mdf: null,
       potOddsRequiredEq: null,
-      sprBucket: { spr: 15, labelJa: '高SPR(>6)' },
-      // sameClass.classJaは意図的にHAND_CLASS_JA[handClass]のまま(B-2の既存契約、
-      // 「同じXクラスの手は」という母集団の呼称であり個別のハンド表記の修正対象外)。
-      sameClass: { classJa: HAND_CLASS_JA.AIR, comboCount: 20, actionMix: [{ label: 'check', freq: 0.8 }, { label: 'bet33', freq: 0.2 }] },
+      sprBucket: { spr: 15, bucket: 'high' },
+      sameClass: { comboCount: 20, actionMix: [{ label: 'check', freq: 0.8 }, { label: 'bet33', freq: 0.2 }] },
       comboVsClass: { comboAggFreq: 0.2, classAggFreq: 0.2, deltaPp: 0 },
       streetStructure: { flopCheckedThrough: null, bettorIsIp: null, villainCheckedToHero: null },
     }
@@ -360,7 +358,7 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
 
     const features: SpotFeatures = {
       nodeContext: { kind: 'facingBet', betAmountBb: 5, potBeforeCallBb: 10 },
-      boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ロー', connected: true, summaryJa: 'レインボー・コネクテッド' },
+      boardTexture: { paired: false, suitPattern: 'rainbow', height: 'low', connected: true },
       handClass: 'AIR', // Q♦J♣ on 5♠4♦3♥: ノーペア(Qハイ)
       sdvLevel: 'none',
       weakPairSubtype: null,
@@ -369,8 +367,8 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       heroComboEquity: 0.27, // 最終的な(改善込みの)エクイティ。ユーザー報告と同じ27%
       currentShowdown: { heroEquity: 0.08, heroAheadPct: 8 }, // 改善なしではほぼ勝てない(残りは改善前提)
       eqPercentileInRange: 15, // レンジ内上位85%相当
-      rangeAdvantage: { heroAvg: 0.45, villainAvg: 0.55, verdictJa: 'レンジ劣位' },
-      nutsAdvantage: { heroTopPct: 3, villainTopPct: 8, verdictJa: 'ナッツ劣位' },
+      rangeAdvantage: { heroAvg: 0.45, villainAvg: 0.55 },
+      nutsAdvantage: { heroTopPct: 3, villainTopPct: 8 },
       equityBuckets: [],
       responses: [
         { forLabel: 'fold', terminal: true, breakdown: [], foldFreq: 0, heroEquityVsContinueRange: null },
@@ -383,8 +381,8 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       targets: null,
       mdf: 0.6, // 60%
       potOddsRequiredEq: 0.2, // ユーザー報告と同じ必要勝率20%
-      sprBucket: { spr: 9, labelJa: '高SPR(>6)' },
-      sameClass: { classJa: HAND_CLASS_JA.AIR, comboCount: 30, actionMix: [{ label: 'fold', freq: 0.6 }, { label: 'call', freq: 0.3 }] },
+      sprBucket: { spr: 9, bucket: 'high' },
+      sameClass: { comboCount: 30, actionMix: [{ label: 'fold', freq: 0.6 }, { label: 'call', freq: 0.3 }] },
       comboVsClass: { comboAggFreq: 0.4, classAggFreq: 0.4, deltaPp: 0 },
       streetStructure: { flopCheckedThrough: null, bettorIsIp: true, villainCheckedToHero: null },
     }

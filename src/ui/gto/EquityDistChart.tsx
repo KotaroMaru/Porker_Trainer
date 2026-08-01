@@ -2,16 +2,13 @@
 // (自分=gold、相手=--text-dim)+レンジ優位/ナッツ優位のverdict行。チャート
 // ライブラリは使わずdivのみで描画する(プロジェクト内に既存のチャート実装がないため)。
 
-import type { EquityBucket } from '../../gto/explain/features'
-
-interface AdvantageSummary {
-  verdictJa: string
-}
+import type { EquityBucket, SpotFeatures } from '../../gto/explain/features'
+import { nutsAdvantageLabelJa, rangeAdvantageLabelJa } from '../../gto/explain/interpretation'
 
 interface Props {
   buckets: EquityBucket[]
-  rangeAdvantage: AdvantageSummary & { heroAvg: number; villainAvg: number }
-  nutsAdvantage: AdvantageSummary & { heroTopPct: number; villainTopPct: number }
+  rangeAdvantage: SpotFeatures['rangeAdvantage']
+  nutsAdvantage: SpotFeatures['nutsAdvantage']
 }
 
 export function EquityDistChart({ buckets, rangeAdvantage, nutsAdvantage }: Props) {
@@ -20,8 +17,8 @@ export function EquityDistChart({ buckets, rangeAdvantage, nutsAdvantage }: Prop
   return (
     <div>
       <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
-        レンジ優位: <strong style={{ color: 'var(--text)' }}>{rangeAdvantage.verdictJa}</strong>(自分平均{(rangeAdvantage.heroAvg * 100).toFixed(0)}%
-        / 相手平均{(rangeAdvantage.villainAvg * 100).toFixed(0)}%) ・ ナッツ優位: <strong style={{ color: 'var(--text)' }}>{nutsAdvantage.verdictJa}</strong>
+        レンジ優位: <strong style={{ color: 'var(--text)' }}>{rangeAdvantageLabelJa(rangeAdvantage)}</strong>(自分平均{(rangeAdvantage.heroAvg * 100).toFixed(0)}%
+        / 相手平均{(rangeAdvantage.villainAvg * 100).toFixed(0)}%) ・ ナッツ優位: <strong style={{ color: 'var(--text)' }}>{nutsAdvantageLabelJa(nutsAdvantage)}</strong>
         (自分{nutsAdvantage.heroTopPct.toFixed(0)}% / 相手{nutsAdvantage.villainTopPct.toFixed(0)}%)
       </div>
       <div style={{ display: 'flex', gap: 3, alignItems: 'flex-end', height: 100 }}>

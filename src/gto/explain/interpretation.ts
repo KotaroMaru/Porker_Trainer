@@ -5,6 +5,24 @@ import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
 import type { SdvLevel, SpotFeatures, WeakPairSubtype } from './features'
 
+export function rangeAdvantageLabelJa(value: SpotFeatures['rangeAdvantage']): string {
+  if (value.heroAvg > value.villainAvg + 0.03) return 'レンジ優位'
+  if (value.villainAvg > value.heroAvg + 0.03) return 'レンジ劣位'
+  return '互角'
+}
+
+export function nutsAdvantageLabelJa(value: SpotFeatures['nutsAdvantage']): string {
+  if (value.heroTopPct > value.villainTopPct + 3) return 'ナッツ優位'
+  if (value.villainTopPct > value.heroTopPct + 3) return 'ナッツ劣位'
+  return '互角'
+}
+
+export function sprLabelJa(value: SpotFeatures['sprBucket']): string {
+  if (value.bucket === 'low') return '低SPR(<3)'
+  if (value.bucket === 'middle') return '中SPR(3-6)'
+  return '高SPR(>6)'
+}
+
 export type BetProfileKind = 'value' | 'protection' | 'semiBluff' | 'pureBluff'
 export type ValueThickness = 'thin' | 'thick'
 export type DeviationDriver = 'blocker' | 'backdoor' | 'thinSdv'

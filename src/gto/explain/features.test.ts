@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { classifyBackdoors, classifyBoardTexture, classifySdvLevel, computeSpotFeatures, computeCurrentShowdown, computePrevStreetCheckedThrough, computeVillainCheckedToHero, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
+import { classifyBackdoors, classifyBoardTexture, classifySdvLevel, computeSpotFeatures, computeCurrentShowdown, computePrevStreetCheckedThrough, computeVillainCheckedToHero, classifyWeakPairSubtype } from './features'
 import type { HistoryEntry } from '../trainer/reviewBuilder'
 import { classifyDraws } from '../../analysis/outs'
 import { computeSharedRunoutEquity } from './rangeEquity'
@@ -35,9 +35,8 @@ describe('classifyBoardTexture', () => {
     expect(texture).toEqual({
       paired: true,
       suitPattern: 'rainbow',
-      heightJa: 'ハイ',
+      height: 'high',
       connected: false,
-      summaryJa: 'ペアボード・レインボー・ドライ',
     })
   })
 
@@ -46,9 +45,8 @@ describe('classifyBoardTexture', () => {
 
     expect(texture.paired).toBe(false)
     expect(texture.suitPattern).toBe('monotone')
-    expect(texture.heightJa).toBe('ハイ')
+    expect(texture.height).toBe('high')
     expect(texture.connected).toBe(false)
-    expect(texture.summaryJa).toBe('モノトーン・ドライ')
   })
 
   it('9s8h7c をレインボーかつコネクテッドなミドルボードに分類する', () => {
@@ -57,9 +55,8 @@ describe('classifyBoardTexture', () => {
     expect(texture).toEqual({
       paired: false,
       suitPattern: 'rainbow',
-      heightJa: 'ミドル',
+      height: 'middle',
       connected: true,
-      summaryJa: 'レインボー・コネクテッド',
     })
   })
 
@@ -73,7 +70,7 @@ describe('classifyBoardTexture', () => {
   it('7s5h2c をローかつドライに分類し、範囲外の枚数を拒否する', () => {
     const texture = classifyBoardTexture([card(7, 's'), card(5, 'h'), card(2, 'c')])
 
-    expect(texture.heightJa).toBe('ロー')
+    expect(texture.height).toBe('low')
     expect(texture.connected).toBe(false)
     expect(() => classifyBoardTexture([card(14, 's'), card(13, 'h')])).toThrow('expected 3 to 5 cards')
   })
@@ -295,7 +292,7 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(features.equityBuckets.length).toBe(10)
     })
 
-    it('sameClass.actionMixの頻度合計は約1、classJaはHAND_CLASS_JAの値と一致', () => {
+    it('sameClass.actionMixの頻度合計は約1で、事実層に表示ラベルを持たない', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const chosenLabel = spot.decodedNode.actionLabels[0]
       const grading = applyUserAction(spot, chosenLabel)
@@ -304,19 +301,18 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
 
       const mixSum = features.sameClass.actionMix.reduce((s, a) => s + a.freq, 0)
       expect(mixSum).toBeCloseTo(1, 1)
-      expect(features.sameClass.classJa).toBe(HAND_CLASS_JA[features.handClass])
       expect(features.sameClass.comboCount).toBeGreaterThan(0)
     })
 
-    it('rangeAdvantage/nutsAdvantageのverdictJaは既定の3値のいずれか', () => {
+    it('rangeAdvantage/nutsAdvantageは数値だけを保持する', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const chosenLabel = spot.decodedNode.actionLabels[0]
       const grading = applyUserAction(spot, chosenLabel)
       const review = buildReview(spot, grading, chosenLabel)
       const features = computeSpotFeatures(review, 0)
 
-      expect(['レンジ優位', 'レンジ劣位', '互角']).toContain(features.rangeAdvantage.verdictJa)
-      expect(['ナッツ優位', 'ナッツ劣位', '互角']).toContain(features.nutsAdvantage.verdictJa)
+      expect(Number.isFinite(features.rangeAdvantage.heroAvg)).toBe(true)
+      expect(Number.isFinite(features.rangeAdvantage.villainAvg)).toBe(true)
       expect(features.nutsAdvantage.heroTopPct).toBeGreaterThanOrEqual(0)
       expect(features.nutsAdvantage.villainTopPct).toBeGreaterThanOrEqual(0)
     })

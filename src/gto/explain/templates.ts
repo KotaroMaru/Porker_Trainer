@@ -204,8 +204,8 @@ export function renderClaim(claim: Claim): string {
   return text
 }
 
-function buildReasonParagraphs(decision: ReviewDecision, features: SpotFeatures, interpretation: SpotInterpretation): string[] {
-  const claims = selectClaims(decision, features, interpretation)
+function buildReasonParagraphs(decision: ReviewDecision, features: SpotFeatures, interpretation: SpotInterpretation, sharedClaims?: Claim[]): string[] {
+  const claims = sharedClaims ?? selectClaims(decision, features, interpretation)
   if (claims.length === 0) {
     return [`${actionJa(decision.grading.bestLabel)}がこの局面のGTO解です。`]
   }
@@ -239,10 +239,10 @@ function buildSameClassLine(features: SpotFeatures, interpretation: SpotInterpre
   return `同じ「${classJa}」クラスの手はGTOで平均${pctFrac(top.freq)}が${actionJa(top.label)}を選びます。`
 }
 
-export function buildExplanation(decision: ReviewDecision, features: SpotFeatures, sharedInterpretation?: SpotInterpretation): Explanation {
+export function buildExplanation(decision: ReviewDecision, features: SpotFeatures, sharedInterpretation?: SpotInterpretation, sharedClaims?: Claim[]): Explanation {
   const interpretation = sharedInterpretation ?? interpretSpot(decision, features)
   const headline = buildHeadline(decision)
-  const paragraphs: string[] = [buildHandParagraph(features, interpretation), ...buildReasonParagraphs(decision, features, interpretation)]
+  const paragraphs: string[] = [buildHandParagraph(features, interpretation), ...buildReasonParagraphs(decision, features, interpretation, sharedClaims)]
   const comparison = buildComparisonParagraph(decision, features)
   if (comparison) paragraphs.push(comparison)
   const mixedNote = buildMixedStrategyNote(decision)
