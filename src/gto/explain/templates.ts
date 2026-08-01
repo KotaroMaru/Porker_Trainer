@@ -9,7 +9,8 @@
 
 import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
-import { handClassLabelJa, type SpotFeatures } from './features'
+import type { SpotFeatures } from './features'
+import { interpretSpot, type SpotInterpretation } from './interpretation'
 import { selectEvidence, type Evidence } from './evidence'
 
 export interface Explanation {
@@ -94,9 +95,9 @@ function buildMixedStrategyNote(decision: ReviewDecision): string | null {
   )
 }
 
-function buildHandParagraph(features: SpotFeatures): string {
+function buildHandParagraph(features: SpotFeatures, interpretation: SpotInterpretation): string {
   const topPct = Number.isNaN(features.eqPercentileInRange) ? null : Math.round(100 - features.eqPercentileInRange)
-  const handClassLabel = handClassLabelJa(features.handClass, features.sdvLevel, features.weakPairSubtype)
+  const handClassLabel = interpretation.handDescriptor.classJa
   const base = `あなたの手は${handClassLabel}で、実質エクイティは${pctVal(features.heroComboEquity * 100)}` + (topPct !== null ? `(自分のレンジ内で上位${topPct}%相当)` : '') + 'です。'
   const drawParts: string[] = []
   if (features.draws.hasFlushDraw) drawParts.push('フラッシュドロー')
@@ -147,22 +148,24 @@ function buildComparisonParagraph(decision: ReviewDecision, features: SpotFeatur
   return line
 }
 
-function buildSameClassLine(features: SpotFeatures): string {
+function buildSameClassLine(features: SpotFeatures, interpretation: SpotInterpretation): string {
+  const classJa = interpretation.handDescriptor.baselineClassJa
   if (features.sameClass.actionMix.length === 0 || features.sameClass.comboCount === 0) {
-    return `同じ「${features.sameClass.classJa}」クラスの手のデータが不足しています。`
+    return `同じ「${classJa}」クラスの手のデータが不足しています。`
   }
   const top = features.sameClass.actionMix.reduce((a, b) => (b.freq > a.freq ? b : a))
-  return `同じ「${features.sameClass.classJa}」クラスの手はGTOで平均${pctFrac(top.freq)}が${actionJa(top.label)}を選びます。`
+  return `同じ「${classJa}」クラスの手はGTOで平均${pctFrac(top.freq)}が${actionJa(top.label)}を選びます。`
 }
 
-export function buildExplanation(decision: ReviewDecision, features: SpotFeatures): Explanation {
+export function buildExplanation(decision: ReviewDecision, features: SpotFeatures, sharedInterpretation?: SpotInterpretation): Explanation {
+  const interpretation = sharedInterpretation ?? interpretSpot(decision, features)
   const headline = buildHeadline(decision)
-  const paragraphs: string[] = [buildHandParagraph(features), ...buildReasonParagraphs(decision, features)]
+  const paragraphs: string[] = [buildHandParagraph(features, interpretation), ...buildReasonParagraphs(decision, features)]
   const comparison = buildComparisonParagraph(decision, features)
   if (comparison) paragraphs.push(comparison)
   const mixedNote = buildMixedStrategyNote(decision)
   if (mixedNote) paragraphs.push(mixedNote)
-  const sameClassLine = buildSameClassLine(features)
+  const sameClassLine = buildSameClassLine(features, interpretation)
 
   return { headline, paragraphs, sameClassLine }
 }

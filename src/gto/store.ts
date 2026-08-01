@@ -27,6 +27,7 @@ import { detectAvailability, playableScenarioIds } from './loader/availability'
 import { createSpot, applyUserAction, type SpotState, type Seat } from './trainer/gameFlow'
 import { buildReview, type ReviewData } from './trainer/reviewBuilder'
 import { computeSpotFeatures, type SpotFeatures } from './explain/features'
+import { interpretSpot, type SpotInterpretation } from './explain/interpretation'
 import { FullHandController, type FullHandSnapshot } from './trainer/fullHandFlow'
 import { createWorkerProviderFactory } from './worker/workerProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
@@ -215,6 +216,8 @@ export interface GtoState {
   reviewSource: ReviewSource
   /** review.decisionsと同じ長さ。未計算の間はnull。 */
   reviewFeatures: (SpotFeatures | null)[]
+  /** reviewFeaturesと同じ添字。事実計算直後にinterpretSpotを一度だけ実行した共有解釈。 */
+  reviewInterpretations: (SpotInterpretation | null)[]
   reviewFeaturesStatus: ReviewFeaturesStatus
   /** レビューのステッパー現在位置。 */
   activeDecisionIdx: number
@@ -311,7 +314,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
     get().fullHandController?.dispose()
     set({
       status: 'loading', spot: null, grading: null, chosenLabel: null, errorMessage: null,
-      fullHand: null, fullHandController: null, review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0,
+      fullHand: null, fullHandController: null, review: null, reviewSource: 'live', reviewFeatures: [], reviewInterpretations: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0,
       dailyChallenge: { ...challenge, phase: 'playing' },
     })
     try {
@@ -352,7 +355,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
               // 無いため、startNewSpot側ほど厳密な差分保持は不要、単純化してよい仕様)。
               if (state.reviewSource === 'live' && state.review) {
                 const newReview = controller.getReview()
-                set({ fullHand: snap, review: newReview, reviewFeatures: new Array(newReview.decisions.length).fill(null), reviewFeaturesStatus: 'idle' })
+                set({ fullHand: snap, review: newReview, reviewFeatures: new Array(newReview.decisions.length).fill(null), reviewInterpretations: new Array(newReview.decisions.length).fill(null), reviewFeaturesStatus: 'idle' })
                 get().ensureFeatures(get().activeDecisionIdx)
               } else {
                 set({ fullHand: snap })
@@ -380,6 +383,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
                 review,
                 reviewSource: 'live',
                 reviewFeatures: new Array(review.decisions.length).fill(null),
+                reviewInterpretations: new Array(review.decisions.length).fill(null),
                 reviewFeaturesStatus: 'idle',
                 activeDecisionIdx: 0,
               }
@@ -459,6 +463,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
   review: null,
   reviewSource: 'live',
   reviewFeatures: [],
+  reviewInterpretations: [],
   reviewFeaturesStatus: 'idle',
   activeDecisionIdx: 0,
   setActiveDecisionIdx: (i: number) => {
@@ -480,6 +485,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       review,
       reviewSource: 'bookmark',
       reviewFeatures: new Array(review.decisions.length).fill(null),
+      reviewInterpretations: new Array(review.decisions.length).fill(null),
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
       activeTab: 'play',
@@ -497,6 +503,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       review: null,
       reviewSource: 'live',
       reviewFeatures: [],
+      reviewInterpretations: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
       activeTab: 'bookmarks',
@@ -507,7 +514,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
 
   customAnalyzer: null,
   startCustomAnalysis: async () => {
-    set({ activeTab: 'review', review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: initialCustomAnalyzer() })
+    set({ activeTab: 'review', review: null, reviewSource: 'live', reviewFeatures: [], reviewInterpretations: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: initialCustomAnalyzer() })
     try {
       await get().loadAvailability()
     } catch (e) {
@@ -580,14 +587,14 @@ export const useGtoStore = create<GtoState>((set, get) => {
     set({ customAnalyzer: { ...analyzer, phase: 'solving', error: null } })
     try {
       const review = await computeCustomHandReview(input, providerFactoryCreator())
-      set({ status: 'graded', review, reviewSource: 'custom', reviewFeatures: new Array(review.decisions.length).fill(null), reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: { ...analyzer, ...input, phase: 'input', error: null } })
+      set({ status: 'graded', review, reviewSource: 'custom', reviewFeatures: new Array(review.decisions.length).fill(null), reviewInterpretations: new Array(review.decisions.length).fill(null), reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: { ...analyzer, ...input, phase: 'input', error: null } })
       get().ensureFeatures(0)
     } catch (e) {
       set((state) => ({ customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'error', error: describeCustomHandError(e) } : state.customAnalyzer }))
     }
   },
   closeCustomAnalysis: () => {
-    set((state) => ({ status: 'idle', review: null, reviewSource: 'live', reviewFeatures: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'input', error: null } : initialCustomAnalyzer(), activeTab: 'review' }))
+    set((state) => ({ status: 'idle', review: null, reviewSource: 'live', reviewFeatures: [], reviewInterpretations: [], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0, customAnalyzer: state.customAnalyzer ? { ...state.customAnalyzer, phase: 'input', error: null } : initialCustomAnalyzer(), activeTab: 'review' }))
   },
 
   ensureFeatures: (idx: number) => {
@@ -604,11 +611,14 @@ export const useGtoStore = create<GtoState>((set, get) => {
       if (get().review !== review) return
       try {
         const features = computeSpotFeatures(review, idx)
+        const interpretation = interpretSpot(review.decisions[idx], features)
         set((state) => {
           if (state.review !== review) return {}
           const next = [...state.reviewFeatures]
+          const nextInterpretations = [...state.reviewInterpretations]
           next[idx] = features
-          return { reviewFeatures: next, reviewFeaturesStatus: 'ready' }
+          nextInterpretations[idx] = interpretation
+          return { reviewFeatures: next, reviewInterpretations: nextInterpretations, reviewFeaturesStatus: 'ready' }
         })
       } catch {
         set((state) => (state.review === review ? { reviewFeaturesStatus: 'error' } : {}))
@@ -632,6 +642,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       review: null,
       reviewSource: 'live',
       reviewFeatures: [],
+      reviewInterpretations: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
     })
@@ -677,7 +688,11 @@ export const useGtoStore = create<GtoState>((set, get) => {
                     oldReview.decisions.length === newReview.decisions.length
                       ? newReview.decisions.map((d, i) => (d === oldReview.decisions[i] ? (s.reviewFeatures[i] ?? null) : null))
                       : new Array(newReview.decisions.length).fill(null)
-                  return { fullHand: snap, review: newReview, reviewFeatures: nextFeatures, reviewFeaturesStatus: 'idle' }
+                  const nextInterpretations =
+                    oldReview.decisions.length === newReview.decisions.length
+                      ? newReview.decisions.map((d, i) => (d === oldReview.decisions[i] ? (s.reviewInterpretations[i] ?? null) : null))
+                      : new Array(newReview.decisions.length).fill(null)
+                  return { fullHand: snap, review: newReview, reviewFeatures: nextFeatures, reviewInterpretations: nextInterpretations, reviewFeaturesStatus: 'idle' }
                 })
                 get().ensureFeatures(get().activeDecisionIdx)
               } else {
@@ -748,6 +763,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
         review,
         reviewSource: 'live',
         reviewFeatures: new Array(review.decisions.length).fill(null),
+        reviewInterpretations: new Array(review.decisions.length).fill(null),
         reviewFeaturesStatus: 'idle',
         activeDecisionIdx: 0,
       }
@@ -777,6 +793,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       review,
       reviewSource: 'live',
       reviewFeatures: new Array(review.decisions.length).fill(null),
+      reviewInterpretations: new Array(review.decisions.length).fill(null),
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
     })
@@ -807,6 +824,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       review,
       reviewSource: 'live',
       reviewFeatures: new Array(review.decisions.length).fill(null),
+      reviewInterpretations: new Array(review.decisions.length).fill(null),
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
     })

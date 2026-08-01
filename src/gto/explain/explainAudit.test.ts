@@ -18,9 +18,9 @@ import { applyUserAction } from '../trainer/gameFlow'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
 import { buildStreetTree } from '../tree/actionTree'
 import type { FlopDef, Scenario } from '../types'
-import { classifyBetKind } from './betKind'
 import { selectEvidence } from './evidence'
 import { computeSpotFeatures } from './features'
+import { interpretSpot } from './interpretation'
 import { buildExplanation } from './templates'
 
 const ROTATING_FLOPS = ['7h7sKd', 'AsQsJs', '5s4d3h'] as const
@@ -113,10 +113,10 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
         const review = buildReview(spot, grading, chosenLabel)
         const decision = review.decisions[0]
         const features = computeSpotFeatures(review, 0)
+        const interpretation = interpretSpot(decision, features)
         const evidences = selectEvidence(decision, features)
-        const explanation = buildExplanation(decision, features)
-        const bestLabel = decision.grading.bestLabel
-        const betKind = classifyBetKind(bestLabel, features)
+        const explanation = buildExplanation(decision, features, interpretation)
+        const betKind = interpretation.betProfile
         const bestTarget = features.targets?.best
         const facingBet = features.nodeContext.kind === 'facingBet'
         const comboAggFreq = aggregateFrequency(decision.grading.actionBreakdown, facingBet)
@@ -133,7 +133,10 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
           currentAheadPct: features.currentShowdown.heroAheadPct,
           betKind: betKind?.kind ?? null,
           evidenceCount: evidences.length,
-          valueTargetCount: bestTarget?.continueWeakHands.length ?? 0,
+          valueTargetCount:
+            interpretation.betProfile?.targetsToShow === 'continueWeak' || interpretation.betProfile?.targetsToShow === 'both'
+              ? (bestTarget?.continueWeakHands.length ?? 0)
+              : 0,
           deltaPp: (comboAggFreq - classAggFreq) * 100,
         })
       }
@@ -177,7 +180,7 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     expect(Object.values(distribution).every((value) => value !== undefined && Number.isFinite(value))).toBe(true)
   })
 
-  it('S1移行後: 事実層で解消した違反は単調減少し、残る解釈層の違反を検出する', () => {
+  it('S2移行後: 解釈層の単一定義でC1/C3/C5/C7を解消し、残る叙述層の違反を検出する', () => {
     const violations = {
       c1Label: results.filter((result) => {
         const hand = result.paragraphs[0]?.match(/あなたの手は(.+?)で、/)?.[1]
@@ -196,11 +199,11 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     expect(violations).toEqual({
       c1Label: 0,
       c2IpImpossible: 8,
-      c3Sdv: 8,
+      c3Sdv: 0,
       c4Draw: 0,
-      c5Target: 13,
+      c5Target: 0,
       c6ThinEvidence: 133,
-      c7PureBluffAhead: 6,
+      c7PureBluffAhead: 0,
       c8InvalidText: 0,
     })
   })

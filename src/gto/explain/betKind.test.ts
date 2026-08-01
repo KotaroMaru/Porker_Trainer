@@ -73,16 +73,16 @@ describe('classifyBetKind', () => {
     expect(result?.reasonJa).toContain('30%')
   })
 
-  it('MIDDLE/WEAK_PAIRでフォールド率が高い場合はprotectionにならずvalueへフォールバックする', () => {
+  it('MIDDLE/WEAK_PAIRはフォールド率が高くてもprotectionを維持する', () => {
     const features = buildFeatures('WEAK_PAIR', [response({ heroEquityVsContinueRange: 0.4, foldFreq: 0.7 })])
     const result = classifyBetKind('bet33', features)
-    expect(result?.kind).toBe('value')
+    expect(result?.kind).toBe('protection')
   })
 
   it('応答ノードが無い(heroEquityVsContinueRangeがnull)場合でもクラッシュせず何らかの分類を返す', () => {
     const features = buildFeatures('MONSTER', [])
     const result = classifyBetKind('bet33', features)
     expect(result).not.toBeNull()
-    expect(result?.kind).toBe('value')
+    expect(result?.kind).toBe('protection')
   })
 })
