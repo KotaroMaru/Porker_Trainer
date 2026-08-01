@@ -104,6 +104,22 @@ describe('solverWorker P9-2 session registry', () => {
     }
   })
 
+  it('withEvs:falseでもfreqsは完全一致し、EV抽出だけを省略する', async () => {
+    send(solveRequest('with-evs-solve'))
+    const solved = await waitForMessage((message) => message.kind === 'result' && message.requestId === 'with-evs-solve')
+    if (solved.kind !== 'result') throw new Error('solve failed')
+
+    send({ kind: 'getNodes', requestId: 'without-evs', solveId: solved.solution.solveId, nodeIds: [''], withEvs: false })
+    send({ kind: 'getNodes', requestId: 'with-evs', solveId: solved.solution.solveId, nodeIds: [''], withEvs: true })
+    const without = await waitForMessage((message) => message.kind === 'nodes' && message.requestId === 'without-evs')
+    const withEvs = await waitForMessage((message) => message.kind === 'nodes' && message.requestId === 'with-evs')
+    if (without.kind !== 'nodes' || withEvs.kind !== 'nodes') throw new Error('node request failed')
+
+    expect(Array.from(without.nodes['']!.freqs)).toEqual(Array.from(withEvs.nodes['']!.freqs))
+    expect(Array.from(without.nodes['']!.evsBb).every((ev) => ev === 0)).toBe(true)
+    expect(Array.from(withEvs.nodes['']!.evsBb).some((ev) => ev !== 0)).toBe(true)
+  })
+
   it('複数solveIdを保持し、同一セッションを継続しながらチャンク間のgetNodesに応答する', async () => {
     // P13 Phase E-3: solveStreetはyieldToWorkerEventLoop()を挟むようになったため、
     // 完了はマクロタスク境界をまたぐ(以前のような同期完了ではない)。

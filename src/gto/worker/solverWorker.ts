@@ -48,7 +48,9 @@ function handleGetNodes(req: Extract<WorkerRequest, { kind: 'getNodes' }>): void
   try {
     const stored = solveRegistry.get(req.solveId)
     if (!stored) throw new Error(`getNodes: no session matches solveId "${req.solveId}"`)
-    const evs = decisionEvs(stored)
+    // ボットの行動抽選はfreqsしか使わない。採点・レビュー側は既定値trueのまま
+    // 実EVを要求し、軽量経路ではnodeDataAtの既存仕様によりゼロ配列を返す。
+    const evs = req.withEvs === false ? new Map<DecisionNode, Float32Array>() : decisionEvs(stored)
     const nodes: Record<string, DecodedNode | null> = {}
     for (const nodeId of req.nodeIds) {
       nodes[nodeId] = nodeDataAt(stored.index, (node) => stored.session.getStrategy(node), evs, nodeId)

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createInProcessProviderFactory } from './inProcessProviderFactory'
 import { buildTurnSubgameTree, buildStreetTree } from '../tree/actionTree'
+import { gradeDecision } from './grading'
 import type { Card } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
 
@@ -31,6 +32,33 @@ function maxAbsoluteDifference(actual: ArrayLike<number>, expected: ArrayLike<nu
 }
 
 describe('createInProcessProviderFactory', () => {
+  it('withEvs:falseは頻度を変えずEVだけを省略し、採点用withEvs:trueは従来値を保つ', async () => {
+    const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
+    const provider = factory.forLiveStreet({
+      street: 'river',
+      board: board5,
+      oopCombos,
+      oopReach,
+      ipCombos,
+      ipReach,
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+
+    const lightweight = (await provider.getNodes([''], { withEvs: false })).get('')!
+    const harvestNode = (await provider.getNodes([''], { withEvs: true })).get('')!
+    const legacyDefault = (await provider.getNodes([''])).get('')!
+
+    expect(Array.from(lightweight.freqs)).toEqual(Array.from(harvestNode.freqs))
+    expect(Array.from(lightweight.evsBb).every((ev) => ev === 0)).toBe(true)
+    expect(maxAbsoluteDifference(harvestNode.evsBb, legacyDefault.evsBb)).toBeLessThanOrEqual(1e-6)
+    for (const label of harvestNode.actionLabels) {
+      expect(gradeDecision(harvestNode, 0, label)).toEqual(gradeDecision(legacyDefault, 0, label))
+    }
+
+    factory.dispose()
+  })
+
   it('forLiveStreet(turn)のrootノードのactionLabelsがローカル構築の街木と一致する', async () => {
     const factory = createInProcessProviderFactory({ maxIterations: 20, targetExploitability: 0.05 })
     const provider = factory.forLiveStreet({

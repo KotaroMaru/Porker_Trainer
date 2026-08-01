@@ -119,8 +119,8 @@ export function createInProcessProviderFactory(opts?: InProcessProviderFactoryOp
         oopCombos: input.oopCombos,
         ipCombos: input.ipCombos,
         ready: Promise.resolve(),
-        async getNodes(nodeIds: string[]) {
-          const evs = decisionEvs()
+        async getNodes(nodeIds: string[], options) {
+          const evs = options?.withEvs === false ? new Map<DecisionNode, Float32Array>() : decisionEvs()
           const result = new Map<string, DecodedNode | null>()
           for (const id of nodeIds) result.set(id, nodeDataAt(index, session.getStrategy, evs, id))
           return result

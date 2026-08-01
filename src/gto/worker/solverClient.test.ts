@@ -67,4 +67,17 @@ describe('SolverClient.refineSession', () => {
     client.terminate()
     void handle.promise.catch(() => undefined)
   })
+
+  it('getNodesのwithEvs:falseをWorker要求へ渡す', () => {
+    const client = new SolverClient()
+    const promise = client.getNodes('solve7', [''], { withEvs: false })
+    expect(MockWorker.latest.posted[0]).toMatchObject({
+      kind: 'getNodes',
+      solveId: 'solve7',
+      nodeIds: [''],
+      withEvs: false,
+    })
+    client.terminate()
+    void promise.catch(() => undefined)
+  })
 })

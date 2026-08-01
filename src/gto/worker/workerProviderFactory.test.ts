@@ -130,4 +130,25 @@ describe('createWorkerProviderFactory P9-3', () => {
     await refinement.promise
     await Promise.resolve()
   })
+
+  it('getNodesのwithEvs指定をSolverClientへそのまま渡す', async () => {
+    mocks.solveStreet.mockReturnValue({
+      promise: Promise.resolve({ solveId: 'solve-nodes', iterationsRun: 20, exploitability: 0.1, gameValue: [0, 0] }),
+      cancel: vi.fn(),
+    })
+    mocks.getNodes.mockResolvedValue({ '': null })
+    const provider = createWorkerProviderFactory().forLiveStreet({
+      street: 'river',
+      board,
+      oopCombos,
+      oopReach: [1],
+      ipCombos,
+      ipReach: [1],
+      potBb: 5.5,
+      effectiveStackBb: 20,
+    })
+
+    await provider.getNodes([''], { withEvs: false })
+    expect(mocks.getNodes).toHaveBeenCalledWith('solve-nodes', [''], { withEvs: false })
+  })
 })

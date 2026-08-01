@@ -57,6 +57,7 @@ function baseSnapshot(result: HandResult): FullHandSnapshot {
     board: board5,
     potBb: result.finalPotBb,
     solveProgress: null,
+    solvePhase: null,
     actionsWithAmounts: [],
     history: [],
     result,

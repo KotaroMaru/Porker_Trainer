@@ -23,6 +23,14 @@ export interface RefineOptions {
   measureEveryIterations?: number
 }
 
+export interface GetNodesOptions {
+  /**
+   * EV配列も抽出するか。省略時はtrue(採点・レビュー向けの従来挙動)。
+   * falseはfreqsだけを使うボット抽選専用で、evsBbは同じ長さのゼロ配列になる。
+   */
+  withEvs?: boolean
+}
+
 export interface StreetNodeProvider {
   readonly street: Street
   /** そのストリート開始時点のボード(flop=3枚, turn=4枚, river=5枚)。 */
@@ -32,7 +40,7 @@ export interface StreetNodeProvider {
   /** ボットが行動できる(=解が完成した)時点でresolveする。precomputedは常に解決済み。 */
   readonly ready: Promise<void>
   /** 指定nodeIdの決断ノードをDecodedNode形状で取得する(木に存在しないnodeIdはnull)。 */
-  getNodes(nodeIds: string[]): Promise<Map<string, DecodedNode | null>>
+  getNodes(nodeIds: string[], options?: GetNodesOptions): Promise<Map<string, DecodedNode | null>>
   /** 現在アクティブな初期ソルブ/精密化の進捗(0..1)。アイドル中・事前計算解ではnull。 */
   progress(): { fraction: number } | null
   /**

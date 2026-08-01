@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { FullHandController, type FullHandSnapshot } from './fullHandFlow'
 import { createInProcessProviderFactory } from './inProcessProviderFactory'
-import type { NodeProviderFactory, StreetSolveInput } from './nodeDataProvider'
+import type { GetNodesOptions, NodeProviderFactory, StreetSolveInput } from './nodeDataProvider'
 import { decodeSolutionFile, type DecodedSolution } from '../loader/binaryFormat'
 import { getScenario, preflopContribPerPlayerBb } from '../data/scenarios'
 import { FLOPS } from '../data/flops'
@@ -679,6 +679,7 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     let callIdx = 0
     let releaseReady: (() => void) | null = null
     let solveProgressValue = 0
+    const turnGetNodesOptions: (GetNodesOptions | undefined)[] = []
     const gate = new Promise<void>((resolve) => {
       releaseReady = resolve
     })
@@ -697,6 +698,10 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
           ...real,
           ready: gatedReady,
           progress: () => (stillSolving ? { fraction: solveProgressValue } : real.progress()),
+          getNodes: (nodeIds, options) => {
+            turnGetNodesOptions.push(options)
+            return real.getNodes(nodeIds, options)
+          },
         }
       },
       dispose: () => baseFactory.dispose(),
@@ -722,6 +727,7 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     expect(waiter.latest?.phase).toBe('botDeciding')
     expect(waiter.latest?.street).toBe('turn')
     expect(waiter.latest?.solveProgress).toBeCloseTo(0, 5)
+    expect(waiter.latest?.solvePhase).toBe('solving')
 
     const updatesBefore = waiter.updates.length
     solveProgressValue = 0.3
@@ -739,12 +745,20 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     }
     expect(progressValues[progressValues.length - 1]).toBeCloseTo(0.7, 5)
 
+    solveProgressValue = 1
+    await new Promise((resolve) => setTimeout(resolve, 250))
+    expect(waiter.latest?.solveProgress).toBe(1)
+    expect(waiter.latest?.solvePhase).toBe('finalizing')
+
     releaseReady!()
     snap = await waiter.waitForPause()
     while (snap.phase !== 'over') {
       controller.chooseAction('check')
       snap = await waiter.waitForPause()
     }
+
+    expect(turnGetNodesOptions.some((options) => options?.withEvs === false)).toBe(true)
+    expect(turnGetNodesOptions.some((options) => options?.withEvs === true)).toBe(true)
 
     controller.dispose()
   }, 30_000)

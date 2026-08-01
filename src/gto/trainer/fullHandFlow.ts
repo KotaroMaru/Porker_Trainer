@@ -73,6 +73,8 @@ export interface FullHandSnapshot {
   potBb: number
   /** botDeciding中のライブソルブ進捗(0..1)。それ以外はnull。 */
   solveProgress: number | null
+  /** botDeciding中のライブソルブ段階。100%到達後の残処理中はfinalizing。 */
+  solvePhase: 'solving' | 'finalizing' | null
   /** userTurn中のみ意味を持つ。 */
   actionsWithAmounts: { label: string; amountBb: number }[]
   history: HistoryEntry[]
@@ -236,7 +238,8 @@ export async function computeStreetHarvest(params: {
   for (const d of userDecisions) {
     for (const a of d.actionsWithAmounts) nodeIdsToFetch.add(childNodeId(d.nodeId, a.label))
   }
-  const fetched = await provider.getNodes([...nodeIdsToFetch])
+  // 採点はevsBbを使うため、ボット抽選用の軽量経路へ誤配線しないよう明示する。
+  const fetched = await provider.getNodes([...nodeIdsToFetch], { withEvs: true })
 
   const oopCombos = provider.oopCombos
   const ipCombos = provider.ipCombos
@@ -416,12 +419,21 @@ export class FullHandController {
       if (a) latestActions.push({ position: this.positionOf(seat), label: a.label, amountBb: a.amountBb, isUser: seat === this.userSeat })
     }
 
+    const solveProgress = this.phase === 'botDeciding' ? (this.provider.progress()?.fraction ?? null) : null
+    const solvePhase =
+      this.phase === 'botDeciding' && solveProgress !== null
+        ? solveProgress >= 1
+          ? 'finalizing'
+          : 'solving'
+        : null
+
     this.deps.onUpdate({
       phase: this.phase,
       street: this.street,
       board: this.board,
       potBb: this.potBb,
-      solveProgress: this.phase === 'botDeciding' ? (this.provider.progress()?.fraction ?? null) : null,
+      solveProgress,
+      solvePhase,
       actionsWithAmounts: this.phase === 'userTurn' && this.curNode.kind === 'decision' ? actionLabelsWithAmounts(this.curNode) : [],
       history: this.history,
       result: this.result,
@@ -560,7 +572,8 @@ export class FullHandController {
         await this.waitForProviderReadyWithProgress(this.provider)
         const nodeId = this.curNodeId
         const decisionNode = this.curNode
-        const fetched = await this.provider.getNodes([nodeId])
+        // sampleActionはfreqsだけを読む。全ノードEV抽出を避け、100%後の待機を短縮する。
+        const fetched = await this.provider.getNodes([nodeId], { withEvs: false })
         const decodedNode = fetched.get(nodeId)
         if (!decodedNode) throw new Error(`advance: no solution data for nodeId="${nodeId}" (street=${this.street})`)
         if (decodedNode.player !== decisionNode.player) {

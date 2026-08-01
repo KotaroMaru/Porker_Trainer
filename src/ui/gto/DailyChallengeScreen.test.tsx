@@ -58,6 +58,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
     board: board3,
     potBb: scenario.potBb,
     solveProgress: null,
+    solvePhase: null,
     actionsWithAmounts: [{ label: 'check', amountBb: 0 }],
     history: [{ street: 'preflop', position: scenario.raiser.position, label: 'レイズ 2.5bb', isUserDecision: false }],
     result: null,
@@ -170,6 +171,19 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
     expect(screen.getByText(/相手が考え中/)).toBeInTheDocument()
     expect(screen.getByText(/解析 42%/)).toBeInTheDocument()
     expect(screen.queryByText('チェック')).not.toBeInTheDocument()
+  })
+
+  it('通しモードで解析100%後の残処理中は「まとめています…」を表示する', () => {
+    resetStore({
+      status: 'botThinking',
+      settings: { mode: 'full', enabledScenarioIds: [] },
+      fullHand: baseFullHand({ phase: 'botDeciding', solveProgress: 1, solvePhase: 'finalizing' }),
+      dailyChallenge: baseDailyChallenge({ handIndex: 4, mode: 'full' }),
+    })
+    render(<DailyChallengeScreen />)
+
+    expect(screen.getByText('まとめています…')).toBeInTheDocument()
+    expect(screen.queryByText(/解析 100%/)).not.toBeInTheDocument()
   })
 
   it('reviewing中(最終問未満)はReviewScreen+「次のハンドへ」ボタンを表示し、クリックでdismissDailyReviewが呼ばれる', async () => {

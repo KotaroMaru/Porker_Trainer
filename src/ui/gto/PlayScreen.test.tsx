@@ -60,6 +60,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
     board: board3,
     potBb: scenario.potBb,
     solveProgress: null,
+    solvePhase: null,
     actionsWithAmounts: [{ label: 'check', amountBb: 0 }],
     history: [{ street: 'preflop', position: scenario.raiser.position, label: 'レイズ 2.5bb', isUserDecision: false }],
     result: null,
@@ -111,6 +112,17 @@ describe('PlayScreen (通しモード, P6 B8)', () => {
 
     expect(screen.getByText(/相手が考え中/)).toBeInTheDocument()
     expect(screen.queryByText(/解析/)).not.toBeInTheDocument()
+  })
+
+  it('解析進捗が100%に達して残処理中なら「まとめています…」へ切り替える', () => {
+    resetToFullMode({
+      status: 'botThinking',
+      fullHand: baseFullHand({ phase: 'botDeciding', solveProgress: 1, solvePhase: 'finalizing' }),
+    })
+    render(<PlayScreen />)
+
+    expect(screen.getByText('まとめています…')).toBeInTheDocument()
+    expect(screen.queryByText(/解析 100%/)).not.toBeInTheDocument()
   })
 
   it('userTurn中はアクションボタンが有効(ソルブ進捗に関わらず)', () => {

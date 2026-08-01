@@ -198,7 +198,9 @@ function FullHandPlayScreen() {
           ボタンは常に有効(木構造だけで決まるため、次街のライブソルブ完了を待つ必要がない)。 */}
       {status === 'botThinking' ? (
         <div style={{ textAlign: 'center', padding: 16, color: 'var(--text-dim)' }}>
-          相手が考え中…{fullHand.solveProgress !== null && ` (解析 ${Math.round(fullHand.solveProgress * 100)}%)`}
+          {fullHand.solvePhase === 'finalizing'
+            ? 'まとめています…'
+            : `相手が考え中…${fullHand.solveProgress !== null ? ` (解析 ${Math.round(fullHand.solveProgress * 100)}%)` : ''}`}
         </div>
       ) : (
         <ActionButtonRow actions={fullHand.actionsWithAmounts} onChoose={chooseAction} />

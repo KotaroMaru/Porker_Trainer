@@ -85,10 +85,10 @@ export function createWorkerProviderFactory(): NodeProviderFactory {
         oopCombos: input.oopCombos,
         ipCombos: input.ipCombos,
         ready,
-        async getNodes(nodeIds: string[]) {
+        async getNodes(nodeIds: string[], options) {
           await ready
           if (!solveId) throw new Error('getNodes: solve did not complete successfully (no solveId)')
-          const record = await client.getNodes(solveId, nodeIds)
+          const record = await client.getNodes(solveId, nodeIds, options)
           const map = new Map<string, DecodedNode | null>()
           for (const id of nodeIds) map.set(id, record[id] ?? null)
           return map

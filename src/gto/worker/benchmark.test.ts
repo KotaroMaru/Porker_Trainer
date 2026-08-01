@@ -5,9 +5,11 @@ import { buildTurnSubgameTree, collectDecisions } from '../tree/actionTree'
 import { getRange } from '../data/ranges'
 import { expandRange } from '../../analysis/range'
 import { narrowRangeByAction } from '../../advisor/rangeModel'
+import { extractDecisionEvs } from '../solver/nodeEvs'
+import { buildNodeIndex, nodeDataAt } from './solutionRepo'
 import type { Card } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
-import type { CfrGame } from '../solver/cfr'
+import type { CfrGame, DecisionNode } from '../solver/cfr'
 
 // ============================================================
 // P2性能ベンチマーク: 実際のプリフロップレンジ+実際のベッティングツリー規模で
@@ -92,7 +94,30 @@ describe('P2性能ベンチマーク: 実際のレンジ規模でのターン部
       const exploitability = session.measureExploitability()
       const measureMs = performance.now() - measureStart
 
+      // P14 ②: 進捗100%後の残処理を同じ現実的レンジで再計測する。
+      // bot抽選はfreqsのみを使うため、軽量経路では全ノードEV抽出を省略できる。
+      const indexStart = performance.now()
+      const index = buildNodeIndex(game.root)
+      const indexMs = performance.now() - indexStart
+      const gameValueStart = performance.now()
+      session.gameValue()
+      const gameValueMs = performance.now() - gameValueStart
+      const lightweightStart = performance.now()
+      nodeDataAt(index, session.getStrategy, new Map<DecisionNode, Float32Array>(), '')
+      const lightweightNodeMs = performance.now() - lightweightStart
+      const evStart = performance.now()
+      const evs = extractDecisionEvs(game, (node) => session.getStrategy(node).frequencies)
+      const evMs = performance.now() - evStart
+      const fullNodeStart = performance.now()
+      nodeDataAt(index, session.getStrategy, evs, '')
+      const fullNodeMs = performance.now() - fullNodeStart
+
       console.log(`背景リファイン実測: advance(8)=${advanceMs.toFixed(0)}ms, measure=${measureMs.toFixed(0)}ms`)
+      console.log(
+        `P14 100%後実測: index=${indexMs.toFixed(0)}ms, gameValue=${gameValueMs.toFixed(0)}ms, ` +
+          `lightNode=${lightweightNodeMs.toFixed(1)}ms, extractEvs=${evMs.toFixed(0)}ms, fullNode=${fullNodeMs.toFixed(1)}ms, ` +
+          `軽量経路残作業=${(indexMs + gameValueMs + lightweightNodeMs).toFixed(0)}ms`,
+      )
       expect(session.iterationsRun).toBe(58)
       expect(Number.isFinite(exploitability)).toBe(true)
     },

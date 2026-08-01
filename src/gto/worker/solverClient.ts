@@ -155,12 +155,12 @@ export class SolverClient {
   }
 
   /** solveStreetが返したsolveIdに紐づく決断ノードを、DecodedNode形状で個別取得する。 */
-  getNodes(solveId: string, nodeIds: string[]): Promise<Record<string, DecodedNode | null>> {
+  getNodes(solveId: string, nodeIds: string[], options?: { withEvs?: boolean }): Promise<Record<string, DecodedNode | null>> {
     const requestId = nextRequestId()
     const promise = new Promise<Record<string, DecodedNode | null>>((resolve, reject) => {
       this.pendingNodes.set(requestId, { resolve, reject })
     })
-    this.worker.postMessage({ kind: 'getNodes', requestId, solveId, nodeIds } satisfies GetNodesRequest)
+    this.worker.postMessage({ kind: 'getNodes', requestId, solveId, nodeIds, withEvs: options?.withEvs } satisfies GetNodesRequest)
     return promise
   }
 

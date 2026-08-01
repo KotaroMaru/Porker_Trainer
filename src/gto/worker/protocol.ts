@@ -43,6 +43,8 @@ export interface GetNodesRequest {
   /** solveStreetの結果で受け取ったsolveId。Workerが保持していないIDならエラーになる。 */
   solveId: string
   nodeIds: string[]
+  /** 省略時はtrue。falseなら戦略頻度だけを返し、重い全ノードEV抽出を省略する。 */
+  withEvs?: boolean
 }
 
 export interface RefineSessionRequest {
