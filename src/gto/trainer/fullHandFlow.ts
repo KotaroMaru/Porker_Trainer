@@ -157,18 +157,22 @@ interface StreetRefineMaterial {
 const NEAR_ZERO_BB = 1e-6
 
 /**
- * P7-6a/P8-2: プレイ中にボットが行動するために必要な最低限の粗さでターンをソルブする
- * (UX優先度①「計算待ちを最小に」)。実測(checkEveryIterations=25のベンチ)で
- * iter25=典型~3.8秒(4.0%)、iter50=~7.4秒(2.0%)、iter75=~11秒(1.2%)。
- * P8-2でcfr.tsに両者リーチ全ゼロの無損失プルーニングを追加したが、この規模の
- * ターン部分ゲームでは効果が薄く(~2〜5%改善)、実用的な待ち時間短縮には不十分と
- * 判明した。そのためmaxIterationsを75→50に引き下げ、絶対的な最悪ケースを
- * ~11秒→~7.4秒へ短縮する(典型ケースはcheckEveryIterations=25の時点で既に
- * targetExploitability付近まで収束していることが多く、実質的な影響は小さい)。
+ * P7-6a/P8-2/P13 Phase E-4: プレイ中にボットが行動するために必要な最低限の粗さで
+ * ターンをソルブする(UX優先度①「計算待ちを最小に」)。
+ * 実測(benchmark.test.ts、hero130×villain222コンボの広いレンジ想定、Node/V8):
+ * iter25=3.8秒(exploitability 4.0%)、iter50=7.5秒(2.0%)、iter75=11.1秒(1.2%)、
+ * iter100=14.8秒(0.9%)。
+ * targetExploitability=4%はiter25時点の実測値(4.01%)とほぼ同値のため、広いレンジの
+ * 局面ではほぼ毎回maxIterationsの上限まで回りきってしまっていた(P13ユーザー報告の
+ * 「ターンで最大15秒」の主因、iPhone実機はNode/V8よりさらに遅い)。
+ * P13でmaxIterationsを50→25へ引き下げ、確実に3.8秒程度で打ち切るようにした
+ * (ユーザー承認済み、2026-08-01)。exploitabilityが目標4%にわずかに届かないまま
+ * 打ち切られる場合があるが、ボット行動がやや粗くなるだけで採点精度には影響しない
+ * (下記の通りREFINE_SOLVEが別途補う)。
  * 採点の精度はフロップ終了直後からのバックグラウンド精密リファイン(REFINE_SOLVE、P9-4)で
  * 別途補う(UX優先度②)。ボット行動の品質はここでは最下位優先度③として明示的に妥協する。
  */
-const TURN_PLAY_SOLVE = { maxIterations: 50, targetExploitability: 0.04, checkEveryIterations: 25 }
+const TURN_PLAY_SOLVE = { maxIterations: 25, targetExploitability: 0.04, checkEveryIterations: 25 }
 /** リバーは木が小さくソルブが高速なため、プレイ時から精密な収束のままでよい。 */
 const RIVER_PLAY_SOLVE = { maxIterations: 300, targetExploitability: 0.005, checkEveryIterations: 50 }
 /**
