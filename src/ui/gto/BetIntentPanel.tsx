@@ -1,11 +1,11 @@
 // P13 Phase C-2: レビュー画面に「ベットの種類(バリュー/セミブラフ/ピュアブラフ/プロテクション)」と
 // 「そのベットのターゲット(バリューなら誰からコールをもらうか、ブラフなら誰を降ろすか)」を
-// 表示する専用パネル。データはfeatures.betTarget(既存)とbetKind.classifyBetKind(新規、
-// 追加のエクイティ計算はしない)から組み立てる。ベット系アクションが無い/betTarget===nullの
+// 表示する専用パネル。データはfeatures.targetsとbetKind.classifyBetKindから組み立てる。
+// 追加のエクイティ計算はしない。ベット系アクションが無い/targets===nullの
 // 場合はパネル自体を出さない。
 
 import type { ReviewDecision } from '../../gto/trainer/reviewBuilder'
-import type { SpotFeatures, BetActionTarget, BlockedHand } from '../../gto/explain/features'
+import type { SpotFeatures, ActionTargets, BlockedHand } from '../../gto/explain/features'
 import { classifyBetKind, type BetKind, type BetKindResult } from '../../gto/explain/betKind'
 import { actionLabelJa } from './labels'
 
@@ -35,7 +35,7 @@ interface Entry {
   roleJa: string
   label: string
   result: BetKindResult
-  target: BetActionTarget | null
+  target: ActionTargets | null
 }
 
 interface Props {
@@ -44,7 +44,7 @@ interface Props {
 }
 
 export function BetIntentPanel({ decision, features }: Props) {
-  if (features.betTarget === null) return null
+  if (features.targets === null) return null
 
   const chosenLabel = decision.chosenLabel
   const bestLabel = decision.grading.bestLabel
@@ -52,12 +52,12 @@ export function BetIntentPanel({ decision, features }: Props) {
 
   const chosenResult = classifyBetKind(chosenLabel, features)
   if (chosenResult) {
-    entries.push({ roleJa: '選んだアクション', label: chosenLabel, result: chosenResult, target: features.betTarget.chosen })
+    entries.push({ roleJa: '選んだアクション', label: chosenLabel, result: chosenResult, target: features.targets.chosen })
   }
   if (bestLabel !== chosenLabel) {
     const bestResult = classifyBetKind(bestLabel, features)
     if (bestResult) {
-      entries.push({ roleJa: '最善アクション', label: bestLabel, result: bestResult, target: features.betTarget.best })
+      entries.push({ roleJa: '最善アクション', label: bestLabel, result: bestResult, target: features.targets.best })
     }
   }
 
@@ -92,11 +92,11 @@ export function BetIntentPanel({ decision, features }: Props) {
   )
 }
 
-function TargetHandsView({ target }: { target: BetActionTarget }) {
+function TargetHandsView({ target }: { target: ActionTargets }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 }}>
-      <TargetHandLine label="バリューターゲット" hands={target.valueTargetHands} verbJa="からコールをもらいます" />
-      <TargetHandLine label="ブラフターゲット" hands={target.bluffTargetHands} verbJa="を降ろします" />
+      <TargetHandLine label="コールして残るが現時点で劣るハンド" hands={target.continueWeakHands} verbJa="が継続します" />
+      <TargetHandLine label="降ろせるハンド" hands={target.foldedHands} verbJa="を降ろします" />
     </div>
   )
 }

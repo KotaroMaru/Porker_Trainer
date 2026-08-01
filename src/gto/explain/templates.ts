@@ -96,7 +96,7 @@ function buildMixedStrategyNote(decision: ReviewDecision): string | null {
 
 function buildHandParagraph(features: SpotFeatures): string {
   const topPct = Number.isNaN(features.eqPercentileInRange) ? null : Math.round(100 - features.eqPercentileInRange)
-  const handClassLabel = handClassLabelJa(features.handClass, features.noPairShowdownValue, features.weakPairSubtype)
+  const handClassLabel = handClassLabelJa(features.handClass, features.sdvLevel, features.weakPairSubtype)
   const base = `あなたの手は${handClassLabel}で、実質エクイティは${pctVal(features.heroComboEquity * 100)}` + (topPct !== null ? `(自分のレンジ内で上位${topPct}%相当)` : '') + 'です。'
   const drawParts: string[] = []
   if (features.draws.hasFlushDraw) drawParts.push('フラッシュドロー')

@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { BetIntentPanel } from './BetIntentPanel'
 import type { ReviewDecision } from '../../gto/trainer/reviewBuilder'
-import type { SpotFeatures, ActionResponseSummary, BetActionTarget } from '../../gto/explain/features'
+import type { SpotFeatures, ActionResponseSummary, ActionTargets } from '../../gto/explain/features'
 import type { GradeResult } from '../../gto/trainer/grading'
 import type { DecodedNode } from '../../gto/loader/binaryFormat'
 import type { HandStrength } from '../../advisor/postflop'
@@ -45,16 +45,17 @@ function response(forLabel: string, overrides: Partial<ActionResponseSummary> = 
 function buildFeatures(
   handClass: HandStrength,
   responses: ActionResponseSummary[],
-  betTarget: SpotFeatures['betTarget'],
+  targets: SpotFeatures['targets'],
   draws: Partial<SpotFeatures['draws']> = {},
 ): SpotFeatures {
   return {
     nodeContext: { kind: 'root' },
     boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
     handClass,
-    noPairShowdownValue: handClass === 'AIR' ? 'air' : null,
+    sdvLevel: handClass === 'AIR' ? 'none' : 'solid',
     weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0, ...draws },
+    backdoors: { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } },
     heroComboEquity: 0.5,
     currentShowdown: { heroEquity: 0.5, heroAheadPct: 50 },
     eqPercentileInRange: 50,
@@ -63,23 +64,24 @@ function buildFeatures(
     equityBuckets: [],
     responses,
     blockers: { valueCombosReducedPct: 0, bluffCombosReducedPct: 0, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
-    betTarget,
+    targets,
     mdf: null,
     potOddsRequiredEq: null,
     sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
     sameClass: { classJa: '', comboCount: 0, actionMix: [] },
-    streetStructure: { flopCheckedThrough: null, bettorIsIp: null },
+    comboVsClass: { comboAggFreq: 0, classAggFreq: 0, deltaPp: 0 },
+    streetStructure: { flopCheckedThrough: null, bettorIsIp: null, villainCheckedToHero: null },
   }
 }
 
-const valueTarget: BetActionTarget = {
+const valueTarget: ActionTargets = {
   forLabel: 'bet33',
-  valueTargetHands: [{ hand: 'AKo', comboCount: 3, weightPct: 60 }],
-  bluffTargetHands: [{ hand: 'QJo', comboCount: 2, weightPct: 40 }],
+  continueWeakHands: [{ hand: 'AKo', comboCount: 3, weightPct: 60 }],
+  foldedHands: [{ hand: 'QJo', comboCount: 2, weightPct: 40 }],
 }
 
 describe('BetIntentPanel', () => {
-  it('チェック/コール/フォールドを選んだ場合(betTarget===null)はパネルを表示しない', () => {
+  it('チェック/コール/フォールドを選んだ場合(targets===null)はパネルを表示しない', () => {
     const decision = buildDecision('check', 'check')
     const features = buildFeatures('MIDDLE', [], null)
     const { container } = render(<BetIntentPanel decision={decision} features={features} />)
@@ -92,7 +94,7 @@ describe('BetIntentPanel', () => {
     const { container } = render(<BetIntentPanel decision={decision} features={features} />)
     expect(container.textContent).toContain('バリューベット(厚め)')
     expect(container.textContent).toContain('AKo')
-    expect(container.textContent).toContain('からコールをもらいます')
+    expect(container.textContent).toContain('コールして残るが現時点で劣るハンド')
   })
 
   it('セミブラフのバッジを表示する', () => {
@@ -125,7 +127,7 @@ describe('BetIntentPanel', () => {
 
   it('選んだアクションと最善アクションが異なるベットの場合、両方を表示する', () => {
     const decision = buildDecision('check', 'bet33')
-    const target: SpotFeatures['betTarget'] = { chosen: null, best: valueTarget }
+    const target: SpotFeatures['targets'] = { chosen: null, best: valueTarget }
     const features = buildFeatures('AIR', [response('bet33', { heroEquityVsContinueRange: 0.1 })], target)
     const { container } = render(<BetIntentPanel decision={decision} features={features} />)
     expect(container.textContent).toContain('最善アクション')
@@ -134,7 +136,7 @@ describe('BetIntentPanel', () => {
 
   it('ターゲットが空配列の場合はターゲット行を表示しない', () => {
     const decision = buildDecision('bet33', 'bet33')
-    const emptyTarget: BetActionTarget = { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [] }
+    const emptyTarget: ActionTargets = { forLabel: 'bet33', continueWeakHands: [], foldedHands: [] }
     const features = buildFeatures('STRONG_MADE', [response('bet33', { heroEquityVsContinueRange: 0.72 })], { chosen: emptyTarget, best: emptyTarget })
     const { container } = render(<BetIntentPanel decision={decision} features={features} />)
     expect(container.textContent).not.toContain('からコールをもらいます')

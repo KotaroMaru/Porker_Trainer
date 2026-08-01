@@ -45,10 +45,9 @@ function actionCategoryOf(label: string): ActionCategory {
   return 'bet'
 }
 
-/** handClass==='AIR'でもノーペアのハイカードとしてのSDVがあれば「SDVあり」とみなす(B-2あ)。 */
+/** 現時点で相手レンジの25%以上に勝っていれば、薄くてもSDVありとみなす。 */
 function hasShowdownValue(features: SpotFeatures): boolean {
-  if (features.handClass === 'AIR') return features.noPairShowdownValue === 'highCard'
-  return true
+  return features.sdvLevel !== 'none'
 }
 
 function pushCheckEvidence(list: Evidence[], features: SpotFeatures): void {

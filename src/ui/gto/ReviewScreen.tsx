@@ -210,7 +210,7 @@ export function ReviewScreen() {
       </div>
 
       {/* P13 Phase C: ベット種別(バリュー/セミブラフ/ピュアブラフ/プロテクション)+
-          ターゲットハンド表示。ベット系アクションが無い/betTarget===nullなら何も出さない
+          ターゲットハンド表示。ベット系アクションが無い/targets===nullなら何も出さない
           (BetIntentPanel内部で判定)。結論→理由→証拠の流れを崩さないよう、戦略ミックス/
           EV表の直後・「なぜ」解説カードの直前に置く。 */}
       {features && <BetIntentPanel decision={decision} features={features} />}

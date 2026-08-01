@@ -23,26 +23,21 @@ export const HAND_CLASS_JA: Record<HandStrength, string> = {
   WEAK_PAIR: '弱いペア',
   STRONG_DRAW: '強いドロー(フラッシュ/オープンエンド)',
   WEAK_DRAW: '弱いドロー(ガットショット)',
-  AIR: 'エア(ショーダウン価値なし)',
+  AIR: 'ノーペア',
 }
 
-/**
- * P13 Phase B-2(あ): AIRクラス(HandStrength上はノーペアを一括りにする)は、実際には
- * A♠2♥ on K♥9♠3♦のようなハイカードにも「エア(ショーダウン価値なし)」と表示してしまう
- * バグがあった(ユーザー報告)。HandStrength型・classifyHandStrength()自体は旧アプリ
- * (ヨコサワモデル)が依存するため変更せず、表示ラベルだけをここで補正する。
- * 境界(ボード最高ランクと同ランク)はキッカー勝負にしかならずSDV無し側に含める。
- */
-export type NoPairShowdownValue = 'highCard' | 'air'
+export type SdvLevel = 'solid' | 'thin' | 'none'
 
-export function classifyNoPairShowdownValue(combo: Combo, board: readonly Card[]): NoPairShowdownValue {
-  const maxBoardRank = Math.max(...board.map((c) => c.rank))
-  return combo.some((c) => c.rank > maxBoardRank) ? 'highCard' : 'air'
+export function classifySdvLevel(heroAheadPct: number): SdvLevel {
+  if (heroAheadPct >= 40) return 'solid'
+  if (heroAheadPct >= 25) return 'thin'
+  return 'none'
 }
 
-const NO_PAIR_SDV_LABEL_JA: Record<NoPairShowdownValue, string> = {
-  highCard: 'ショーダウン価値のあるハイカード',
-  air: 'エア(ショーダウン価値なし)',
+const NO_PAIR_SDV_LABEL_JA: Record<SdvLevel, string> = {
+  solid: 'SDVありのハイカード',
+  thin: 'SDVが薄いハイカード',
+  none: 'SDVなしのハイカード',
 }
 
 /**
@@ -67,8 +62,8 @@ const WEAK_PAIR_SUBTYPE_LABEL_JA: Record<WeakPairSubtype, string> = {
  * 細分化前の母集団全体の値)は意図的にこの関数を経由させない(既存テストの契約通り
  * HAND_CLASS_JA[handClass]と一致させる)。
  */
-export function handClassLabelJa(handClass: HandStrength, noPairShowdownValue: NoPairShowdownValue | null, weakPairSubtype: WeakPairSubtype | null): string {
-  if (handClass === 'AIR' && noPairShowdownValue !== null) return NO_PAIR_SDV_LABEL_JA[noPairShowdownValue]
+export function handClassLabelJa(handClass: HandStrength, sdvLevel: SdvLevel, weakPairSubtype: WeakPairSubtype | null): string {
+  if (handClass === 'AIR') return NO_PAIR_SDV_LABEL_JA[sdvLevel]
   if (handClass === 'WEAK_PAIR' && weakPairSubtype !== null) return WEAK_PAIR_SUBTYPE_LABEL_JA[weakPairSubtype]
   return HAND_CLASS_JA[handClass]
 }
@@ -118,26 +113,41 @@ export interface BoardTexture {
   summaryJa: string
 }
 
-export interface BetActionTarget {
+export interface ActionTargets {
   forLabel: string
-  valueTargetHands: BlockedHand[]
-  bluffTargetHands: BlockedHand[]
+  /** 相手の継続レンジ中、現時点でヒーローに劣るハンド。 */
+  continueWeakHands: BlockedHand[]
+  /** 相手の応答戦略でfoldに配分されるハンド。 */
+  foldedHands: BlockedHand[]
 }
 
-export interface BetTarget {
-  chosen: BetActionTarget | null
-  best: BetActionTarget | null
+export interface Targets {
+  chosen: ActionTargets | null
+  best: ActionTargets | null
+}
+
+export interface Backdoors {
+  flush: { has: boolean; isNut: boolean }
+  straight: { has: boolean; isWheel: boolean }
+}
+
+export interface ComboVsClass {
+  comboAggFreq: number
+  classAggFreq: number
+  deltaPp: number
 }
 
 export interface SpotFeatures {
   nodeContext: NodeContext
   boardTexture: BoardTexture
   handClass: HandStrength
-  /** handClass==='AIR'の場合のみ非null(P13 Phase B-2あ)。 */
-  noPairShowdownValue: NoPairShowdownValue | null
+  /** 現在の相手レンジに対して、実手札が現時点で勝っている割合を3段階化した単一定義。 */
+  sdvLevel: SdvLevel
   /** handClass==='WEAK_PAIR'の場合のみ非null(P13 Phase B-2い)。 */
   weakPairSubtype: WeakPairSubtype | null
   draws: ReturnType<typeof classifyDraws>
+  /** classifyDraws()とは独立した、フロップ限定のランナーランナー候補。 */
+  backdoors: Backdoors
   heroComboEquity: number
   /**
    * P13 Phase D-0-a: heroComboEquityは残りストリートの改善込みの最終エクイティのため、
@@ -164,11 +174,12 @@ export interface SpotFeatures {
     continueBlockedHands: BlockedHand[] | null
   }
   /** chosen/bestの少なくとも一方にfoldを含む応答ノードがある場合のみ非null。 */
-  betTarget: BetTarget | null
+  targets: Targets | null
   mdf: number | null
   potOddsRequiredEq: number | null
   sprBucket: { spr: number; labelJa: string }
   sameClass: { classJa: string; comboCount: number; actionMix: { label: string; freq: number }[] }
+  comboVsClass: ComboVsClass
   /**
    * P13 Phase D-0-c: review.historyから導出する直前ストリートの構造。判定に必要な
    * 履歴が揃わない(前のストリートが存在しない/ベットに直面していない等)場合はnull。
@@ -178,6 +189,8 @@ export interface SpotFeatures {
     flopCheckedThrough: boolean | null
     /** 現在直面しているベットの主(villain)がIPか。ベットに直面していない場合はnull。 */
     bettorIsIp: boolean | null
+    /** 同じストリート内で、直前に相手がチェックしてヒーローへ回したか。 */
+    villainCheckedToHero: boolean | null
   }
 }
 
@@ -310,11 +323,11 @@ function aggregateTargetHands(villainCombos: readonly Combo[], weights: readonly
     .sort((a, b) => b.weightPct - a.weightPct || a.hand.localeCompare(b.hand))
 }
 
-function computeResponses(decision: ReviewDecision, userCombo: Combo): { responses: ActionResponseSummary[]; betTargets: Map<string, BetActionTarget> } {
+function computeResponses(decision: ReviewDecision, userCombo: Combo): { responses: ActionResponseSummary[]; actionTargets: Map<string, ActionTargets> } {
   const bestLabel = decision.grading.bestLabel
   const chosenLabel = decision.chosenLabel
   const handCount = decision.villainCombos.length
-  const betTargets = new Map<string, BetActionTarget>()
+  const actionTargets = new Map<string, ActionTargets>()
 
   const responses = decision.decodedNode.actionLabels.map((label) => {
     const rn = decision.responseNodes.find((r) => r.forLabel === label)
@@ -346,21 +359,21 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
       // foldを持たない応答ノード(check→bet等)は、ベットへのfold/continue分布を
       // 定義できないためターゲット抽出の対象外にする。
       if (foldIdx >= 0) {
-        const valueTargetHands = aggregateTargetHands(
+        const continueWeakHands = aggregateTargetHands(
           decision.villainCombos,
           continueWeights,
           (index) => !Number.isNaN(eqResult.villainEquity[index]) && eqResult.villainEquity[index] < VALUE_TARGET_EQUITY_THRESHOLD,
         )
         const foldWeights = decision.villainWeights.map((weight, index) => weight * node.freqs[foldIdx * handCount + index])
-        const bluffTargetHands = aggregateTargetHands(decision.villainCombos, foldWeights)
-        betTargets.set(label, { forLabel: label, valueTargetHands, bluffTargetHands })
+        const foldedHands = aggregateTargetHands(decision.villainCombos, foldWeights)
+        actionTargets.set(label, { forLabel: label, continueWeakHands, foldedHands })
       }
     }
 
     return { forLabel: label, terminal: false, breakdown, foldFreq, heroEquityVsContinueRange }
   })
 
-  return { responses, betTargets }
+  return { responses, actionTargets }
 }
 
 /**
@@ -425,6 +438,48 @@ export function computeCurrentShowdown(heroCombo: Combo, villainCombos: readonly
   }
 }
 
+const STRAIGHT_WINDOWS: readonly (readonly number[])[] = [
+  [14, 2, 3, 4, 5],
+  [2, 3, 4, 5, 6],
+  [3, 4, 5, 6, 7],
+  [4, 5, 6, 7, 8],
+  [5, 6, 7, 8, 9],
+  [6, 7, 8, 9, 10],
+  [7, 8, 9, 10, 11],
+  [8, 9, 10, 11, 12],
+  [9, 10, 11, 12, 13],
+  [10, 11, 12, 13, 14],
+]
+
+/** フロップでのみ成立する、2枚連続ランアウトが必要なバックドア候補をカードだけから導出する。 */
+export function classifyBackdoors(combo: Combo, board: readonly Card[]): Backdoors {
+  if (board.length !== 3) {
+    return { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } }
+  }
+
+  const suits: Card['suit'][] = ['s', 'h', 'd', 'c']
+  const flushSuit = suits.find((suit) => {
+    const heroCount = combo.filter((card) => card.suit === suit).length
+    const totalCount = heroCount + board.filter((card) => card.suit === suit).length
+    return heroCount > 0 && totalCount === 3
+  })
+  const comboRanks = new Set<number>(combo.map((card) => card.rank))
+  const allRanks = new Set<number>([...combo, ...board].map((card) => card.rank))
+  const straightWindow = STRAIGHT_WINDOWS.find((window) => {
+    const present = window.filter((rank) => allRanks.has(rank)).length
+    const fromHero = window.filter((rank) => comboRanks.has(rank)).length
+    return present === 3 && fromHero === 2
+  })
+
+  return {
+    flush: {
+      has: flushSuit !== undefined,
+      isNut: flushSuit !== undefined && combo.some((card) => card.suit === flushSuit && card.rank === 14),
+    },
+    straight: { has: straightWindow !== undefined, isWheel: straightWindow === STRAIGHT_WINDOWS[0] },
+  }
+}
+
 /**
  * P13 Phase D-0-c: historyから、streetの直前ストリートが全checkで終わったかを導出する。
  * 前のストリートが存在しない(flop決断)場合はnull(推測で書かない、というplanの方針)。
@@ -435,6 +490,27 @@ export function computePrevStreetCheckedThrough(history: readonly HistoryEntry[]
   const entries = history.filter((h) => h.street === prevStreet)
   if (entries.length === 0) return null
   return entries.every((h) => h.label === 'check')
+}
+
+/** 現在のユーザー決断より前の同一ストリート最後の相手行動がcheckかを返す。 */
+export function computeVillainCheckedToHero(history: readonly HistoryEntry[], decisionIdx: number, street: ReviewDecision['street']): boolean | null {
+  const currentIndex = history.findIndex((entry) => entry.isUserDecision && entry.decisionIndex === decisionIdx)
+  const beforeCurrent = currentIndex >= 0 ? history.slice(0, currentIndex) : history
+  const entries = beforeCurrent.filter((entry) => entry.street === street)
+  const last = entries.at(-1)
+  if (!last || last.isUserDecision) return null
+  return last.label === 'check'
+}
+
+function aggregateAggressiveFrequency(entries: readonly { label: string; freq: number }[], facingBet: boolean): number {
+  return entries.reduce((sum, entry) => sum + ((facingBet ? entry.label !== 'fold' : entry.label !== 'check') ? entry.freq : 0), 0)
+}
+
+export function computeComboVsClass(decision: ReviewDecision, sameClass: SpotFeatures['sameClass'], nodeContext: NodeContext): ComboVsClass {
+  const facingBet = nodeContext.kind === 'facingBet'
+  const comboAggFreq = aggregateAggressiveFrequency(decision.grading.actionBreakdown, facingBet)
+  const classAggFreq = aggregateAggressiveFrequency(sameClass.actionMix, facingBet)
+  return { comboAggFreq, classAggFreq, deltaPp: (comboAggFreq - classAggFreq) * 100 }
 }
 
 const SPR_LOW = 3
@@ -477,7 +553,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const handClass = classifyHandStrength(userCombo, board)
   const draws = classifyDraws(userCombo, board)
-  const noPairShowdownValue = handClass === 'AIR' ? classifyNoPairShowdownValue(userCombo, board) : null
+  const backdoors = classifyBackdoors(userCombo, board)
   const weakPairSubtype = handClass === 'WEAK_PAIR' ? classifyWeakPairSubtype(draws) : null
 
   const rangeEq = computeSharedRunoutEquity({
@@ -508,14 +584,15 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
 
   const equityBuckets = buildEquityBuckets(rangeEq.heroEquity, decision.heroWeights, rangeEq.villainEquity, decision.villainWeights)
 
-  const { responses, betTargets } = computeResponses(decision, userCombo)
-  const chosenBetTarget = betTargets.get(decision.chosenLabel) ?? null
-  const bestBetTarget = betTargets.get(decision.grading.bestLabel) ?? null
-  const betTarget: BetTarget | null = chosenBetTarget || bestBetTarget ? { chosen: chosenBetTarget, best: bestBetTarget } : null
+  const { responses, actionTargets } = computeResponses(decision, userCombo)
+  const chosenTargets = actionTargets.get(decision.chosenLabel) ?? null
+  const bestTargets = actionTargets.get(decision.grading.bestLabel) ?? null
+  const targets: Targets | null = chosenTargets || bestTargets ? { chosen: chosenTargets, best: bestTargets } : null
 
   const nodeContext = computeNodeContext(decision)
 
   const currentShowdown = computeCurrentShowdown(userCombo, decision.villainCombos, decision.villainWeights, board)
+  const sdvLevel = classifySdvLevel(currentShowdown.heroAheadPct)
 
   const BLUFF_BLOCK_EQUITY_THRESHOLD = 1 - VALUE_EQUITY_THRESHOLD // 0.34: バリュー側(0.66)と対称な「明確に劣っている」しきい値
   const { pct: valueCombosReducedPct, blockedExamples, blockedHands: valueBlockedHands } = computeBlockedPct(
@@ -569,6 +646,7 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const sprBucket = { spr, labelJa: sprLabel(spr) }
 
   const sameClass = computeSameClass(decision, board, handClass)
+  const comboVsClass = computeComboVsClass(decision, sameClass, nodeContext)
 
   // P13 Phase D-0-c: bettorIsIpは「villainが今直面させているベットの主か」であり、
   // villainのIP/OOPはハンド全体で固定(decision.seatはヒーローの席=0:OOP/1:IP)なので、
@@ -576,15 +654,17 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const streetStructure = {
     flopCheckedThrough: computePrevStreetCheckedThrough(review.history, decision.street),
     bettorIsIp: nodeContext.kind === 'facingBet' ? decision.seat === 0 : null,
+    villainCheckedToHero: computeVillainCheckedToHero(review.history, decisionIdx, decision.street),
   }
 
   return {
     nodeContext,
     boardTexture,
     handClass,
-    noPairShowdownValue,
+    sdvLevel,
     weakPairSubtype,
     draws,
+    backdoors,
     heroComboEquity,
     currentShowdown,
     eqPercentileInRange,
@@ -593,11 +673,12 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     equityBuckets,
     responses,
     blockers: { valueCombosReducedPct, bluffCombosReducedPct, continueCombosReducedPct, blockedExamples, valueBlockedHands, bluffBlockedHands, continueBlockedHands },
-    betTarget,
+    targets,
     mdf,
     potOddsRequiredEq,
     sprBucket,
     sameClass,
+    comboVsClass,
     streetStructure,
   }
 }

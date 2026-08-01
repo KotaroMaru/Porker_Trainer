@@ -94,9 +94,10 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
     nodeContext,
     boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
     handClass,
-    noPairShowdownValue: handClass === 'AIR' ? 'highCard' : null,
+    sdvLevel: handClass === 'AIR' ? 'solid' : 'solid',
     weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 },
+    backdoors: { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } },
     heroComboEquity: 0.55,
     currentShowdown: { heroEquity: 0.5, heroAheadPct: 45 },
     eqPercentileInRange: 62,
@@ -113,12 +114,13 @@ function buildSyntheticFeatures(kind: 'root' | 'facingBet', handClass: HandStren
       bluffBlockedHands: [{ hand: '72o', comboCount: 1, weightPct: 100 }],
       continueBlockedHands: kind === 'facingBet' ? [{ hand: 'AKs', comboCount: 1, weightPct: 100 }] : null,
     },
-    betTarget: null,
+    targets: null,
     mdf: kind === 'facingBet' ? 0.6 : null,
     potOddsRequiredEq: kind === 'facingBet' ? 0.33 : null,
     sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
     sameClass: { classJa: HAND_CLASS_JA[handClass], comboCount: 10, actionMix: [{ label: bestLabel, freq: 0.7 }, { label: 'check', freq: 0.3 }] },
-    streetStructure: { flopCheckedThrough: kind === 'facingBet' ? true : null, bettorIsIp: kind === 'facingBet' ? true : null },
+    comboVsClass: { comboAggFreq: 0.7, classAggFreq: 0.7, deltaPp: 0 },
+    streetStructure: { flopCheckedThrough: kind === 'facingBet' ? true : null, bettorIsIp: kind === 'facingBet' ? true : null, villainCheckedToHero: null },
   }
 }
 
@@ -165,7 +167,7 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
     const without = buildExplanation(decision, features).paragraphs.join('')
     expect(without).not.toContain('undefined')
 
-    features.betTarget = { chosen: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [] }, best: { forLabel: 'bet33', valueTargetHands: [], bluffTargetHands: [] } }
+    features.targets = { chosen: { forLabel: 'bet33', continueWeakHands: [], foldedHands: [] }, best: { forLabel: 'bet33', continueWeakHands: [], foldedHands: [] } }
     const withEmptyTargets = buildExplanation(decision, features).paragraphs.join('')
     expect(withEmptyTargets).not.toContain('undefined')
   })
@@ -298,9 +300,10 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       nodeContext: { kind: 'root' },
       boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ハイ', connected: false, summaryJa: 'レインボー・ドライ' },
       handClass: 'AIR', // A♠2♥ on K♥9♠3♦: ノーペア
-      noPairShowdownValue: 'highCard', // A(14) > ボード最高ランクK(13)
+      sdvLevel: 'none',
       weakPairSubtype: null,
       draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 }, // K♥9♠3♦レインボー・A♠2♥もバラバラでドロー無し
+      backdoors: { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } },
       heroComboEquity: 0.22,
       currentShowdown: { heroEquity: 0.22, heroAheadPct: 20 },
       eqPercentileInRange: 40,
@@ -312,14 +315,15 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
         { forLabel: 'bet33', terminal: false, breakdown: [{ label: 'fold', freq: 0.5 }, { label: 'call', freq: 0.5 }], foldFreq: 0.5, heroEquityVsContinueRange: 0.15 },
       ],
       blockers: { valueCombosReducedPct: 0, bluffCombosReducedPct: 0, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
-      betTarget: null,
+      targets: null,
       mdf: null,
       potOddsRequiredEq: null,
       sprBucket: { spr: 15, labelJa: '高SPR(>6)' },
       // sameClass.classJaは意図的にHAND_CLASS_JA[handClass]のまま(B-2の既存契約、
       // 「同じXクラスの手は」という母集団の呼称であり個別のハンド表記の修正対象外)。
       sameClass: { classJa: HAND_CLASS_JA.AIR, comboCount: 20, actionMix: [{ label: 'check', freq: 0.8 }, { label: 'bet33', freq: 0.2 }] },
-      streetStructure: { flopCheckedThrough: null, bettorIsIp: null },
+      comboVsClass: { comboAggFreq: 0.2, classAggFreq: 0.2, deltaPp: 0 },
+      streetStructure: { flopCheckedThrough: null, bettorIsIp: null, villainCheckedToHero: null },
     }
 
     const explanation = buildExplanation(decision, features)
@@ -361,9 +365,10 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       nodeContext: { kind: 'facingBet', betAmountBb: 5, potBeforeCallBb: 10 },
       boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ロー', connected: true, summaryJa: 'レインボー・コネクテッド' },
       handClass: 'AIR', // Q♦J♣ on 5♠4♦3♥: ノーペア(Qハイ)
-      noPairShowdownValue: 'highCard', // Q(12) > ボード最高ランク5
+      sdvLevel: 'none',
       weakPairSubtype: null,
       draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 },
+      backdoors: { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } },
       heroComboEquity: 0.27, // 最終的な(改善込みの)エクイティ。ユーザー報告と同じ27%
       currentShowdown: { heroEquity: 0.08, heroAheadPct: 8 }, // 改善なしではほぼ勝てない(残りは改善前提)
       eqPercentileInRange: 15, // レンジ内上位85%相当
@@ -378,12 +383,13 @@ describe('P13 Phase D-4: ユーザー報告ケースの回帰テスト', () => {
       // バリュー側・ブラフ側の差が閾値未満(D-1のBLOCKER_NET_THRESHOLD_PCT=3)なので
       // ブロッカー証拠は出ない想定(片側だけの誤誘導表示を避ける、というD-0-bの設計)。
       blockers: { valueCombosReducedPct: 6, bluffCombosReducedPct: 5, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
-      betTarget: null,
+      targets: null,
       mdf: 0.6, // 60%
       potOddsRequiredEq: 0.2, // ユーザー報告と同じ必要勝率20%
       sprBucket: { spr: 9, labelJa: '高SPR(>6)' },
       sameClass: { classJa: HAND_CLASS_JA.AIR, comboCount: 30, actionMix: [{ label: 'fold', freq: 0.6 }, { label: 'call', freq: 0.3 }] },
-      streetStructure: { flopCheckedThrough: null, bettorIsIp: true },
+      comboVsClass: { comboAggFreq: 0.4, classAggFreq: 0.4, deltaPp: 0 },
+      streetStructure: { flopCheckedThrough: null, bettorIsIp: true, villainCheckedToHero: null },
     }
 
     const explanation = buildExplanation(decision, features)

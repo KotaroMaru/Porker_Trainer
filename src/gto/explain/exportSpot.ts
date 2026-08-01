@@ -73,7 +73,7 @@ function buildStrategyTable(decision: ReviewDecision): string {
 function buildFeaturesSection(features: SpotFeatures | null): string {
   if (!features) return '(計算中、または未計算)'
   const lines: string[] = [
-    `- ハンドクラス: ${handClassLabelJa(features.handClass, features.noPairShowdownValue, features.weakPairSubtype)}`,
+    `- ハンドクラス: ${handClassLabelJa(features.handClass, features.sdvLevel, features.weakPairSubtype)}`,
     `- 最終エクイティ(残りストリートの改善込み): ${pct(features.heroComboEquity)}(レンジ内上位${Math.round(100 - features.eqPercentileInRange)}%相当)`,
     `- 現時点の勝率(改善なし): ${pct(features.currentShowdown.heroEquity)}(相手レンジのうち現時点で優っている割合 ${features.currentShowdown.heroAheadPct.toFixed(0)}%)`,
     `- レンジ優位: ${features.rangeAdvantage.verdictJa}(自分平均${pct(features.rangeAdvantage.heroAvg)} / 相手平均${pct(features.rangeAdvantage.villainAvg)})`,

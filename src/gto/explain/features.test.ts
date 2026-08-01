@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeAll } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { classifyBoardTexture, computeSpotFeatures, computeCurrentShowdown, computePrevStreetCheckedThrough, classifyNoPairShowdownValue, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
+import { classifyBackdoors, classifyBoardTexture, classifySdvLevel, computeSpotFeatures, computeCurrentShowdown, computePrevStreetCheckedThrough, computeVillainCheckedToHero, classifyWeakPairSubtype, HAND_CLASS_JA } from './features'
 import type { HistoryEntry } from '../trainer/reviewBuilder'
 import { classifyDraws } from '../../analysis/outs'
 import { computeSharedRunoutEquity } from './rangeEquity'
@@ -79,19 +79,39 @@ describe('classifyBoardTexture', () => {
   })
 })
 
-describe('classifyNoPairShowdownValue (P13 Phase B-2あ)', () => {
-  const board = [card(13, 'h'), card(9, 's'), card(3, 'd')] // K♥9♠3♦、最高ランクK(13)
+describe('classifySdvLevel (P14 S1)', () => {
+  it('実測で確定した40%/25%境界を含めて3段階に分類する', () => {
+    expect(classifySdvLevel(40)).toBe('solid')
+    expect(classifySdvLevel(39.9)).toBe('thin')
+    expect(classifySdvLevel(25)).toBe('thin')
+    expect(classifySdvLevel(24.9)).toBe('none')
+  })
+})
 
-  it('A♠2♥(ボード最高ランクを上回るAを含む)を highCard に分類する', () => {
-    expect(classifyNoPairShowdownValue([card(14, 's'), card(2, 'h')], board)).toBe('highCard')
+describe('classifyBackdoors (P14 S1)', () => {
+  it('A♦3♦ on 7♥7♠K♦はナッツ・バックドアフラッシュだけを持つ', () => {
+    const result = classifyBackdoors([card(14, 'd'), card(3, 'd')], [card(7, 'h'), card(7, 's'), card(13, 'd')])
+    expect(result).toEqual({ flush: { has: true, isNut: true }, straight: { has: false, isWheel: false } })
   })
 
-  it('7♠2♥(ボード最高ランクを上回るカードが無い)を air に分類する', () => {
-    expect(classifyNoPairShowdownValue([card(7, 's'), card(2, 'h')], board)).toBe('air')
+  it('8♣9♦ on T♠2♥3♣は非ホイールのバックドアストレートを持つ', () => {
+    const result = classifyBackdoors([card(8, 'c'), card(9, 'd')], [card(10, 's'), card(2, 'h'), card(3, 'c')])
+    expect(result.straight).toEqual({ has: true, isWheel: false })
   })
 
-  it('境界: ボード最高ランクと同ランクのカードは超えていないため air 側に含める', () => {
-    expect(classifyNoPairShowdownValue([card(13, 'c'), card(2, 'h')], board)).toBe('air')
+  it('A♠2♠ on 9♦4♥6♣はホイールのバックドアストレートを持つ', () => {
+    const result = classifyBackdoors([card(14, 's'), card(2, 's')], [card(9, 'd'), card(4, 'h'), card(6, 'c')])
+    expect(result.straight).toEqual({ has: true, isWheel: true })
+  })
+
+  it('フロップが3枚同スートでも手札がそのスートを持たなければバックドアフラッシュにしない', () => {
+    const result = classifyBackdoors([card(14, 's'), card(2, 'd')], [card(13, 'h'), card(9, 'h'), card(4, 'h')])
+    expect(result.flush).toEqual({ has: false, isNut: false })
+  })
+
+  it('ターン/リバーではバックドア候補を返さない', () => {
+    const result = classifyBackdoors([card(14, 'd'), card(3, 'd')], [card(7, 'h'), card(7, 's'), card(13, 'd'), card(2, 'c')])
+    expect(result).toEqual({ flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } })
   })
 })
 
@@ -169,6 +189,21 @@ describe('computePrevStreetCheckedThrough (P13 Phase D-0-c)', () => {
 
   it('直前ストリートの履歴が無ければnull(推測しない)', () => {
     expect(computePrevStreetCheckedThrough([entry('preflop', 'レイズ 2.5bb')], 'turn')).toBeNull()
+  })
+})
+
+describe('computeVillainCheckedToHero (P14 S1)', () => {
+  function entry(label: string, isUserDecision = false, decisionIndex?: number): HistoryEntry {
+    return { street: 'flop', position: isUserDecision ? 'BTN' : 'CO', label, isUserDecision, decisionIndex }
+  }
+
+  it('同一ストリートで相手が直前にcheckしていればtrue', () => {
+    expect(computeVillainCheckedToHero([entry('check'), entry('bet33', true, 0)], 0, 'flop')).toBe(true)
+  })
+
+  it('相手の直前行動がbetならfalse、先行履歴がなければnull', () => {
+    expect(computeVillainCheckedToHero([entry('bet33'), entry('call', true, 0)], 0, 'flop')).toBe(false)
+    expect(computeVillainCheckedToHero([entry('check', true, 0)], 0, 'flop')).toBeNull()
   })
 })
 
@@ -301,7 +336,7 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(withEquity.length).toBeLessThanOrEqual(2)
     })
 
-    it('betTargetは実コンボ対継続レンジの個別EQとfold頻度をクラス別に正規化して集計する', () => {
+    it('targetsは実コンボ対継続レンジの個別EQとfold頻度を事実名で集計する', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const chosenLabel = 'bet33'
       const grading = applyUserAction(spot, chosenLabel)
@@ -360,10 +395,10 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
         expectedBluff.set(hand, entry)
       }
 
-      const target = features.betTarget?.chosen
+      const target = features.targets?.chosen
       expect(target?.forLabel).toBe(chosenLabel)
-      const valueTargets = target?.valueTargetHands ?? []
-      const bluffTargets = target?.bluffTargetHands ?? []
+      const valueTargets = target?.continueWeakHands ?? []
+      const bluffTargets = target?.foldedHands ?? []
       expect(valueTargets.length).toBe(expectedValue.size)
       expect(bluffTargets.length).toBe(expectedBluff.size)
       expect(new Set(valueTargets.map((entry) => entry.hand)).size).toBe(valueTargets.length)
@@ -389,16 +424,16 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       }
     })
 
-    it('chosen/bestともfold応答を持たないcheckならbetTargetはnull', () => {
+    it('chosen/bestともfold応答を持たないcheckならtargetsはnull', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const grading = applyUserAction(spot, 'check')
       const review = buildReview(spot, { ...grading, bestLabel: 'check' }, 'check')
       const features = computeSpotFeatures(review, 0)
 
-      expect(features.betTarget).toBeNull()
+      expect(features.targets).toBeNull()
     })
 
-    it('fold頻度が全コンボ0ならbluffTargetHandsは空配列になる', () => {
+    it('fold頻度が全コンボ0ならfoldedHandsは空配列になる', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const chosenLabel = 'bet33'
       const grading = applyUserAction(spot, chosenLabel)
@@ -415,7 +450,7 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
 
       const features = computeSpotFeatures(modifiedReview, 0)
 
-      expect(features.betTarget?.chosen?.bluffTargetHands).toEqual([])
+      expect(features.targets?.chosen?.foldedHands).toEqual([])
     })
   })
 

@@ -45,9 +45,10 @@ function buildFeatures(overrides: Partial<SpotFeatures> = {}): SpotFeatures {
     nodeContext: { kind: 'facingBet', betAmountBb: 5, potBeforeCallBb: 10 },
     boardTexture: { paired: false, suitPattern: 'rainbow', heightJa: 'ミドル', connected: false, summaryJa: 'レインボー・ドライ' },
     handClass,
-    noPairShowdownValue: handClass === 'AIR' ? 'air' : null,
+    sdvLevel: handClass === 'AIR' ? 'none' : 'thin',
     weakPairSubtype: handClass === 'WEAK_PAIR' ? 'bluffCatcher' : null,
     draws: { hasFlushDraw: false, hasOESD: false, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 0 },
+    backdoors: { flush: { has: false, isNut: false }, straight: { has: false, isWheel: false } },
     heroComboEquity: 0.35,
     currentShowdown: { heroEquity: 0.35, heroAheadPct: 30 },
     eqPercentileInRange: 50,
@@ -56,12 +57,13 @@ function buildFeatures(overrides: Partial<SpotFeatures> = {}): SpotFeatures {
     equityBuckets: [],
     responses: [response('raise55')],
     blockers: { valueCombosReducedPct: 0, bluffCombosReducedPct: 0, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
-    betTarget: null,
+    targets: null,
     mdf: 0.75,
     potOddsRequiredEq: 0.2,
     sprBucket: { spr: 4, labelJa: '中SPR(3-6)' },
     sameClass: { classJa: '', comboCount: 0, actionMix: [] },
-    streetStructure: { flopCheckedThrough: null, bettorIsIp: null },
+    comboVsClass: { comboAggFreq: 0, classAggFreq: 0, deltaPp: 0 },
+    streetStructure: { flopCheckedThrough: null, bettorIsIp: null, villainCheckedToHero: null },
     ...overrides,
   }
 }
@@ -92,7 +94,7 @@ describe('selectEvidence: check', () => {
 
   it('P13回帰: ドロー無しのAIR(ハイカード)はcheckDrawではなくcheckPotControlMiddleになる(「エクイティを活かす」文言が出ない)', () => {
     const decision = buildDecision({ bestLabel: 'check', actionLabels: ['check', 'bet33'] })
-    const features = buildFeatures({ nodeContext: { kind: 'root' }, handClass: 'AIR', noPairShowdownValue: 'highCard' })
+    const features = buildFeatures({ nodeContext: { kind: 'root' }, handClass: 'AIR', sdvLevel: 'solid' })
     const result = selectEvidence(decision, features)
     expect(result.length).toBe(1)
     expect(result[0].id).toBe('checkPotControlMiddle')
@@ -180,7 +182,7 @@ describe('selectEvidence: ブロッカー(両側)', () => {
     const decision = buildDecision({ bestLabel: 'call' })
     const features = buildFeatures({
       handClass: 'AIR',
-      noPairShowdownValue: 'air',
+      sdvLevel: 'none',
       blockers: { valueCombosReducedPct: 20, bluffCombosReducedPct: 5, continueCombosReducedPct: null, blockedExamples: [], valueBlockedHands: [], bluffBlockedHands: [], continueBlockedHands: null },
     })
     const result = selectEvidence(decision, features)
@@ -192,7 +194,7 @@ describe('selectEvidence: 直前ストリートの構造', () => {
   it('flopCheckedThrough&&bettorIsIpで、nutsAdvantageと矛盾しなければ証拠を出す', () => {
     const decision = buildDecision({ bestLabel: 'call' })
     const features = buildFeatures({
-      streetStructure: { flopCheckedThrough: true, bettorIsIp: true },
+      streetStructure: { flopCheckedThrough: true, bettorIsIp: true, villainCheckedToHero: null },
       nutsAdvantage: { heroTopPct: 10, villainTopPct: 10, verdictJa: '互角' },
     })
     const result = selectEvidence(decision, features)
@@ -202,7 +204,7 @@ describe('selectEvidence: 直前ストリートの構造', () => {
   it('flopCheckedThrough&&bettorIsIpでも、相手のナッツ比率が明確に高ければ矛盾するため証拠を出さない', () => {
     const decision = buildDecision({ bestLabel: 'call' })
     const features = buildFeatures({
-      streetStructure: { flopCheckedThrough: true, bettorIsIp: true },
+      streetStructure: { flopCheckedThrough: true, bettorIsIp: true, villainCheckedToHero: null },
       nutsAdvantage: { heroTopPct: 5, villainTopPct: 20, verdictJa: 'ナッツ劣位' },
     })
     const result = selectEvidence(decision, features)
@@ -211,7 +213,7 @@ describe('selectEvidence: 直前ストリートの構造', () => {
 
   it('flopCheckedThroughがnull(flop決断)なら証拠を出さない', () => {
     const decision = buildDecision({ bestLabel: 'call' })
-    const features = buildFeatures({ streetStructure: { flopCheckedThrough: null, bettorIsIp: true } })
+    const features = buildFeatures({ streetStructure: { flopCheckedThrough: null, bettorIsIp: true, villainCheckedToHero: null } })
     const result = selectEvidence(decision, features)
     expect(result.find((e) => e.id === 'streetStructure')).toBeUndefined()
   })

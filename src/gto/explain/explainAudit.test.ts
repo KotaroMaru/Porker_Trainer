@@ -33,7 +33,7 @@ interface AuditSpotResult {
   paragraphs: string[]
   sameClassLine: string
   fullText: string
-  noPairShowdownValue: string | null
+  sdvLevel: string
   hasAnyDraw: boolean
   currentAheadPct: number
   betKind: string | null
@@ -117,7 +117,7 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
         const explanation = buildExplanation(decision, features)
         const bestLabel = decision.grading.bestLabel
         const betKind = classifyBetKind(bestLabel, features)
-        const bestTarget = features.betTarget?.best
+        const bestTarget = features.targets?.best
         const facingBet = features.nodeContext.kind === 'facingBet'
         const comboAggFreq = aggregateFrequency(decision.grading.actionBreakdown, facingBet)
         const classAggFreq = aggregateFrequency(features.sameClass.actionMix, facingBet)
@@ -128,12 +128,12 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
           paragraphs: explanation.paragraphs,
           sameClassLine: explanation.sameClassLine,
           fullText: [explanation.headline, ...explanation.paragraphs, explanation.sameClassLine].join('\n'),
-          noPairShowdownValue: features.noPairShowdownValue,
+          sdvLevel: features.sdvLevel,
           hasAnyDraw: features.draws.hasFlushDraw || features.draws.hasOESD || features.draws.hasGutshot,
           currentAheadPct: features.currentShowdown.heroAheadPct,
           betKind: betKind?.kind ?? null,
           evidenceCount: evidences.length,
-          valueTargetCount: bestTarget?.valueTargetHands.length ?? 0,
+          valueTargetCount: bestTarget?.continueWeakHands.length ?? 0,
           deltaPp: (comboAggFreq - classAggFreq) * 100,
         })
       }
@@ -177,7 +177,7 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     expect(Object.values(distribution).every((value) => value !== undefined && Number.isFinite(value))).toBe(true)
   })
 
-  it('S0基準線: 現行実装の既知矛盾を実際に検出する', () => {
+  it('S1移行後: 事実層で解消した違反は単調減少し、残る解釈層の違反を検出する', () => {
     const violations = {
       c1Label: results.filter((result) => {
         const hand = result.paragraphs[0]?.match(/あなたの手は(.+?)で、/)?.[1]
@@ -185,7 +185,7 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
         return Boolean(hand?.includes('ショーダウン価値のある') && same?.includes('ショーダウン価値なし'))
       }).length,
       c2IpImpossible: results.filter((result) => result.seat === 1 && /チェックレイズ|相手のベットを誘い/.test(result.fullText)).length,
-      c3Sdv: results.filter((result) => result.noPairShowdownValue === 'highCard' && result.fullText.includes('ショーダウン価値がほとんど無く')).length,
+      c3Sdv: results.filter((result) => result.sdvLevel !== 'none' && result.fullText.includes('ショーダウン価値がほとんど無く')).length,
       c4Draw: results.filter((result) => !result.hasAnyDraw && /次のストリートで(エクイティを活かす|の改善)/.test(result.fullText)).length,
       c5Target: results.filter((result) => result.betKind === 'pureBluff' && result.valueTargetCount > 0).length,
       c6ThinEvidence: results.filter((result) => result.evidenceCount < 2).length,
@@ -194,9 +194,9 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     }
     console.log('P14 S0 violation baseline:', violations)
     expect(violations).toEqual({
-      c1Label: 43,
+      c1Label: 0,
       c2IpImpossible: 8,
-      c3Sdv: 12,
+      c3Sdv: 8,
       c4Draw: 0,
       c5Target: 13,
       c6ThinEvidence: 133,
