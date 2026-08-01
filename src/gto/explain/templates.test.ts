@@ -172,14 +172,15 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
     expect(withEmptyTargets).not.toContain('undefined')
   })
 
-  it('チェック+MONSTERはチェックレイズ誘発(スロープレイ)の理由を含む', () => {
+  it('チェック+MONSTERはOOPでのみ後続応答を理由にし、意図を断定しない', () => {
     const decision = buildSyntheticDecision('root', 'correct')
     decision.grading.bestLabel = 'check'
     decision.chosenLabel = 'check'
     const features = buildSyntheticFeatures('root', 'MONSTER')
 
     const reason = buildExplanation(decision, features).paragraphs.slice(1).join('')
-    expect(reason).toContain('チェックレイズ')
+    expect(reason).toContain('OOPではチェック後にも相手のベットへ応答できる')
+    expect(reason).not.toContain('相手のベットを誘い')
   })
 
   it('fold: 改善込みの最終エクイティでも必要勝率に届かない場合は不足を理由にする', () => {
@@ -206,7 +207,7 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
 
     const reason = buildExplanation(decision, features).paragraphs.slice(1).join('')
     expect(reason).toContain('ただし')
-    expect(reason).toContain('単独で上回る')
+    expect(reason).toContain('単独で上回り')
   })
 
   it('call: 改善なしでは必要勝率に届かないが最終的には届く場合、単純なポットオッズ適用を断定しない', () => {
@@ -244,7 +245,7 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
     const decision = buildSyntheticDecision('root', 'incorrect')
     const features = buildSyntheticFeatures('root', 'MIDDLE')
 
-    const comparison = buildExplanation(decision, features).paragraphs[2]
+    const comparison = buildExplanation(decision, features).paragraphs.find((paragraph) => paragraph.includes('のEV') && paragraph.includes('に対し')) ?? ''
     expect(comparison).not.toContain('エクイティもベット33%の方が')
   })
 
@@ -252,19 +253,15 @@ describe('buildExplanation: アクションカテゴリ別の理由段落分岐'
     const decision = buildSyntheticDecision('root', 'correct')
     const features = buildSyntheticFeatures('root', 'MONSTER')
     const explanation = buildExplanation(decision, features)
-    expect(explanation.paragraphs.length).toBe(2)
+    expect(explanation.paragraphs.some((paragraph) => paragraph.includes('のEV') && paragraph.includes('に対し'))).toBe(false)
   })
 
   it('marginal/incorrect時は比較段落が追加される', () => {
-    // marginalはevLossBb=0.3/potBb=10=3%(収束誤差の許容内)のため、P7-5で追加した
-    // 混合戦略注記(buildMixedStrategyNote)も加わり4段落になる。incorrectはevLossBb比率
-    // 15%で許容外のため注記は付かず3段落のまま。
-    const expected: Record<'marginal' | 'incorrect', number> = { marginal: 4, incorrect: 3 }
     for (const verdict of ['marginal', 'incorrect'] as const) {
       const decision = buildSyntheticDecision('root', verdict)
       const features = buildSyntheticFeatures('root', 'MIDDLE')
       const explanation = buildExplanation(decision, features)
-      expect(explanation.paragraphs.length).toBe(expected[verdict])
+      expect(explanation.paragraphs.some((paragraph) => paragraph.includes('のEV') && paragraph.includes('に対し'))).toBe(true)
     }
   })
 })

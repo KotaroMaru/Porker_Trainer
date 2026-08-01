@@ -8,8 +8,9 @@ import type { Combo } from '../../analysis/range'
 import { cardLabel } from '../../engine/deck'
 import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
 import { handClassLabelJa, type SpotFeatures } from './features'
-import { selectEvidence } from './evidence'
-import type { Explanation } from './templates'
+import { selectClaims } from './evidence'
+import { interpretSpot } from './interpretation'
+import { renderClaim, type Explanation } from './templates'
 
 const ACTION_LABEL_JA: Record<string, string> = {
   check: 'チェック',
@@ -91,13 +92,13 @@ function buildFeaturesSection(features: SpotFeatures | null): string {
 /** P13 Phase D-3: selectEvidence()の出力を「この結論の根拠」「打ち消し要因」に分けて出力する。 */
 function buildEvidenceSection(decision: ReviewDecision | null, features: SpotFeatures | null): string {
   if (!decision || !features) return '(計算中、または未計算)'
-  const evidences = selectEvidence(decision, features)
-  if (evidences.length === 0) return '(この決断向けの証拠は選定されませんでした)'
-  const supporting = evidences.filter((e) => e.polarity !== 'opposes')
-  const opposing = evidences.filter((e) => e.polarity === 'opposes')
-  const lines: string[] = ['### この結論の根拠', ...(supporting.length > 0 ? supporting.map((e) => `- ${e.textJa}`) : ['(該当なし)'])]
+  const claims = selectClaims(decision, features, interpretSpot(decision, features))
+  if (claims.length === 0) return '(この決断向けの根拠は選定されませんでした)'
+  const supporting = claims.filter((claim) => claim.polarity !== 'opposes')
+  const opposing = claims.filter((claim) => claim.polarity === 'opposes')
+  const lines: string[] = ['### この結論の根拠', ...(supporting.length > 0 ? supporting.map((claim) => `- ${renderClaim(claim)}`) : ['(該当なし)'])]
   if (opposing.length > 0) {
-    lines.push('', '### 打ち消し要因(結論には織り込み済み)', ...opposing.map((e) => `- ${e.textJa}`))
+    lines.push('', '### 打ち消し要因(結論には織り込み済み)', ...opposing.map((claim) => `- ${renderClaim(claim)}`))
   }
   return lines.join('\n')
 }

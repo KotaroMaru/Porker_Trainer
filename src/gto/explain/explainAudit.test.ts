@@ -18,7 +18,7 @@ import { applyUserAction } from '../trainer/gameFlow'
 import { buildReview, handStrFromCombo } from '../trainer/reviewBuilder'
 import { buildStreetTree } from '../tree/actionTree'
 import type { FlopDef, Scenario } from '../types'
-import { selectEvidence } from './evidence'
+import { selectClaims } from './evidence'
 import { computeSpotFeatures } from './features'
 import { interpretSpot } from './interpretation'
 import { buildExplanation } from './templates'
@@ -114,7 +114,7 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
         const decision = review.decisions[0]
         const features = computeSpotFeatures(review, 0)
         const interpretation = interpretSpot(decision, features)
-        const evidences = selectEvidence(decision, features)
+        const claims = selectClaims(decision, features, interpretation)
         const explanation = buildExplanation(decision, features, interpretation)
         const betKind = interpretation.betProfile
         const bestTarget = features.targets?.best
@@ -132,7 +132,7 @@ async function collectResults(cases: { scenario: Scenario; flopStr: string }[]):
           hasAnyDraw: features.draws.hasFlushDraw || features.draws.hasOESD || features.draws.hasGutshot,
           currentAheadPct: features.currentShowdown.heroAheadPct,
           betKind: betKind?.kind ?? null,
-          evidenceCount: evidences.length,
+          evidenceCount: claims.length,
           valueTargetCount:
             interpretation.betProfile?.targetsToShow === 'continueWeak' || interpretation.betProfile?.targetsToShow === 'both'
               ? (bestTarget?.continueWeakHands.length ?? 0)
@@ -180,7 +180,7 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     expect(Object.values(distribution).every((value) => value !== undefined && Number.isFinite(value))).toBe(true)
   })
 
-  it('S2移行後: 解釈層の単一定義でC1/C3/C5/C7を解消し、残る叙述層の違反を検出する', () => {
+  it('S3移行後: Claimの網羅性とIP/OOPガードにより既知違反を0にする', () => {
     const violations = {
       c1Label: results.filter((result) => {
         const hand = result.paragraphs[0]?.match(/あなたの手は(.+?)で、/)?.[1]
@@ -198,11 +198,11 @@ describe('P14 S0: 解説文の恒久監査(全シナリオ横断)', () => {
     console.log('P14 S0 violation baseline:', violations)
     expect(violations).toEqual({
       c1Label: 0,
-      c2IpImpossible: 8,
+      c2IpImpossible: 0,
       c3Sdv: 0,
       c4Draw: 0,
       c5Target: 0,
-      c6ThinEvidence: 133,
+      c6ThinEvidence: 0,
       c7PureBluffAhead: 0,
       c8InvalidText: 0,
     })

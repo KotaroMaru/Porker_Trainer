@@ -10,8 +10,8 @@
 import type { HandStrength } from '../../advisor/postflop'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
 import type { SpotFeatures } from './features'
-import { interpretSpot, type SpotInterpretation } from './interpretation'
-import { selectEvidence, type Evidence } from './evidence'
+import { BET_PROFILE_LABEL_JA, interpretSpot, type SpotInterpretation } from './interpretation'
+import { selectClaims, type Claim } from './evidence'
 
 export interface Explanation {
   /** 結論1行。 */
@@ -115,19 +115,101 @@ function buildHandParagraph(features: SpotFeatures, interpretation: SpotInterpre
  * 組み立てるだけにする。polarity==='opposes'の証拠は落とさず、「ただし〜」で明示的に
  * 打ち消して提示する(結論との矛盾を放置しない、外部レビュー対応)。
  */
-function evidenceToParagraph(evidence: Evidence): string {
-  if (evidence.polarity === 'opposes') {
-    return `ただし、${evidence.textJa}この点は他の根拠と相殺されます。`
-  }
-  return evidence.textJa
+function claimNumber(claim: Claim, key: string): number {
+  const value = claim.data[key]
+  return typeof value === 'number' ? value : NaN
 }
 
-function buildReasonParagraphs(decision: ReviewDecision, features: SpotFeatures): string[] {
-  const evidences = selectEvidence(decision, features)
-  if (evidences.length === 0) {
+function claimString(claim: Claim, key: string): string {
+  const value = claim.data[key]
+  return typeof value === 'string' ? value : ''
+}
+
+export function renderClaim(claim: Claim): string {
+  let text: string
+  switch (claim.id) {
+    case 'betProfile': {
+      const kind = claimString(claim, 'kind') as keyof typeof BET_PROFILE_LABEL_JA
+      const continueEq = claimNumber(claim, 'continueEquityPct')
+      const foldFreq = claimNumber(claim, 'foldFreqPct')
+      if (kind === 'value') text = `${BET_PROFILE_LABEL_JA[kind]}型で、相手の継続レンジに対するエクイティは${continueEq.toFixed(0)}%です。`
+      else if (kind === 'protection') text = `${BET_PROFILE_LABEL_JA[kind]}型です。現時点のショーダウン価値があり、相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
+      else if (kind === 'semiBluff') text = `${BET_PROFILE_LABEL_JA[kind]}型で、通常またはバックドアのドローがあります。相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
+      else text = `${BET_PROFILE_LABEL_JA.pureBluff}型です。現時点のショーダウン価値とドローが乏しく、相手の観測フォールド率は${foldFreq >= 0 ? `${foldFreq.toFixed(0)}%` : '未計算'}です。`
+      break
+    }
+    case 'classBaseline': {
+      const context = claimString(claim, 'rangeContext')
+      text = `このコンボの積極頻度は${claimNumber(claim, 'comboAggPct').toFixed(0)}%、同クラス平均は${claimNumber(claim, 'classAggPct').toFixed(0)}%(差${claimNumber(claim, 'deltaPp').toFixed(0)}pp)です。${context ? `${context}。` : ''}`
+      break
+    }
+    case 'deviation': {
+      const driverLabels: Record<string, string> = { blocker: 'ブロッカー', backdoor: 'バックドア', thinSdv: '脆いショーダウン価値' }
+      const drivers = claimString(claim, 'drivers').split(',').filter(Boolean).map((driver) => driverLabels[driver] ?? driver)
+      text = `同クラス平均から${claimNumber(claim, 'deltaPp').toFixed(0)}pp逸脱しています。${drivers.length > 0 ? `検出できた固有要因は${drivers.join('・')}です。` : '追加の固有要因は事実データから特定できません。'}`
+      break
+    }
+    case 'betBlockerNet':
+      text = `ベット文脈のブロッカーは、強い相手を${claimNumber(claim, 'valuePct').toFixed(0)}%、弱い相手を${claimNumber(claim, 'weakPct').toFixed(0)}%減らしています(差${claimNumber(claim, 'netPp').toFixed(0)}pp)。${claimString(claim, 'examples') ? `例: ${claimString(claim, 'examples')}。` : ''}`
+      break
+    case 'foldedHands':
+      text = `相手の応答戦略では${claimString(claim, 'hands')}がフォールド側に多く配分されています。`
+      break
+    case 'checkShowdown':
+      text = `現時点で相手レンジの${claimNumber(claim, 'aheadPct').toFixed(0)}%に勝っており、チェック後もショーダウン価値を残せます。`
+      break
+    case 'checkDraw':
+      text = `${claimString(claim, 'draws')}があり、チェック後のランアウトでも改善余地があります。`
+      break
+    case 'checkTrap':
+      text = 'OOPではチェック後にも相手のベットへ応答できるため、強い手をチェックレンジに残せます。'
+      break
+    case 'mdfVsPercentile':
+      text = `最低ディフェンス頻度(MDF)は${claimNumber(claim, 'mdfPct').toFixed(0)}%、この手はレンジ内上位${claimNumber(claim, 'topPct').toFixed(0)}%です。`
+      break
+    case 'potOdds': {
+      const state = claimString(claim, 'state')
+      const required = claimNumber(claim, 'requiredPct').toFixed(0)
+      const current = claimNumber(claim, 'currentPct').toFixed(0)
+      const final = claimNumber(claim, 'finalPct').toFixed(0)
+      text =
+        state === 'currentEnough'
+          ? `現時点の勝率${current}%が必要勝率${required}%を単独で上回ります(最終エクイティ${final}%)。`
+          : state === 'improvementNeeded'
+            ? `最終エクイティ${final}%は必要勝率${required}%を満たしますが、現時点は${current}%で改善が前提のため、そのまま当てはめられません。`
+            : `現時点の勝率${current}%、最終エクイティ${final}%とも必要勝率${required}%に届きません。`
+      break
+    }
+    case 'defenseBlockerNet':
+      text = `相手の強い側を${claimNumber(claim, 'valuePct').toFixed(0)}%、弱い側を${claimNumber(claim, 'weakPct').toFixed(0)}%ブロックしています(差${claimNumber(claim, 'netPp').toFixed(0)}pp)。`
+      break
+    case 'streetStructure':
+      text = claim.data.bettorIsIp ? '前ストリートはチェックで回り、相手はIPからベットしています。' : '前ストリートはチェックで回り、相手はOOPからベットしています。'
+      break
+    case 'raiseRejection': {
+      const continueEq = claimNumber(claim, 'continueEquityPct')
+      text = `${actionJa(claimString(claim, 'raiseLabel'))}はEV${claimNumber(claim, 'raiseEvBb').toFixed(2)}bbで、推奨アクションより${claimNumber(claim, 'evDiffBb').toFixed(2)}bb低いです。${continueEq >= 0 ? `継続レンジへのエクイティは${continueEq.toFixed(0)}%です。` : ''}`
+      break
+    }
+    case 'frequencyReference':
+      text = `${actionJa(claimString(claim, 'label'))}のソルバー頻度は${claimNumber(claim, 'freqPct').toFixed(0)}%です。`
+      break
+    case 'insufficientEvidence':
+      text = `このスポットで数値から特定できる補助根拠は${claimNumber(claim, 'availableCount').toFixed(0)}件です。決め手は上の頻度表を参照してください。`
+      break
+  }
+  if (claim.polarity === 'opposes') {
+    return `ただし、${text}この点は他の根拠と相殺されます。`
+  }
+  return text
+}
+
+function buildReasonParagraphs(decision: ReviewDecision, features: SpotFeatures, interpretation: SpotInterpretation): string[] {
+  const claims = selectClaims(decision, features, interpretation)
+  if (claims.length === 0) {
     return [`${actionJa(decision.grading.bestLabel)}がこの局面のGTO解です。`]
   }
-  return evidences.map(evidenceToParagraph)
+  return claims.map(renderClaim)
 }
 
 function buildComparisonParagraph(decision: ReviewDecision, features: SpotFeatures): string | null {
@@ -160,7 +242,7 @@ function buildSameClassLine(features: SpotFeatures, interpretation: SpotInterpre
 export function buildExplanation(decision: ReviewDecision, features: SpotFeatures, sharedInterpretation?: SpotInterpretation): Explanation {
   const interpretation = sharedInterpretation ?? interpretSpot(decision, features)
   const headline = buildHeadline(decision)
-  const paragraphs: string[] = [buildHandParagraph(features, interpretation), ...buildReasonParagraphs(decision, features)]
+  const paragraphs: string[] = [buildHandParagraph(features, interpretation), ...buildReasonParagraphs(decision, features, interpretation)]
   const comparison = buildComparisonParagraph(decision, features)
   if (comparison) paragraphs.push(comparison)
   const mixedNote = buildMixedStrategyNote(decision)
