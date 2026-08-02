@@ -11,6 +11,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { buildStreetTree } from './actionTree'
+import { RECORDED_TURN_BUNDLES } from '../loader/turnBundleSource'
 
 const WORKFLOW_PATH = resolve(__dirname, '../../../.github/workflows/gto-turn-bundles.yml')
 
@@ -61,6 +62,12 @@ describe('ターンバンドル生成対象の経路', () => {
   it('ワークフローの既定値がフロップ木の列挙結果と完全に一致する', () => {
     // 順序差で落とさない(ワークフロー側は人が読みやすい順に並べてよい)。
     expect([...workflowDefaultPaths()].sort()).toEqual([...enumerateTurnPaths()].sort())
+  })
+
+  it('アプリ側の収録定数がフロップ木の列挙結果と完全に一致する', () => {
+    // ここがずれると「バンドルは生成済みなのにアプリが取りに行かず、
+    // 常にライブソルブへ退避する」という、型にもテストにも現れない欠落になる。
+    expect([...RECORDED_TURN_BUNDLES.srp_btn_vs_bb].sort()).toEqual([...enumerateTurnPaths()].sort())
   })
 
   it('オールイン経路は対象に含めない(ランアウトのみで決断が無いため)', () => {

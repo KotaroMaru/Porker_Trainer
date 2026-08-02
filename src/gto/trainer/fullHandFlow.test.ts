@@ -5,7 +5,7 @@
 // フィクスチャ読み込みはjoin(process.cwd(),...)方式(precomputedProvider.test.tsと同じ、
 // import.meta.url経由は既知の環境依存問題があるため不採用)。
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { FullHandController, type FullHandSnapshot } from './fullHandFlow'
@@ -16,6 +16,7 @@ import { getScenario, preflopContribPerPlayerBb } from '../data/scenarios'
 import { FLOPS } from '../data/flops'
 import { cardKey } from '../../engine/deck'
 import { evaluate } from '../../engine/evaluator'
+import * as turnBundleSource from '../loader/turnBundleSource'
 
 const FLOP_STR = 'AsQsJs'
 
@@ -75,6 +76,12 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     flopSolution = decodeSolutionFile(arrayBuf)
   })
 
+  // このファイルの全テストで実ネットワークを禁止する。個別テストだけ応答を上書きする。
+  beforeEach(() => {
+    vi.restoreAllMocks()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 404 })))
+  })
+
   function makeFactory(): NodeProviderFactory {
     const inner = createInProcessProviderFactory({ maxIterations: 15, targetExploitability: 0.1 })
     return {
@@ -91,6 +98,126 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
       dispose: () => inner.dispose(),
     }
   }
+
+  it('収録済みcheck-checkではハイフン区切りpathIdのバンドルを使い、ライブソルブもrefineも開始しない', async () => {
+    const loadSpy = vi.spyOn(turnBundleSource, 'loadTurnBundleSolution').mockImplementation(async request => {
+      const turnKey = cardKey(request.turnCard)
+      return {
+        ...flopSolution,
+        oopCombos: flopSolution.oopCombos.filter(combo => combo.every(card => cardKey(card) !== turnKey)),
+        ipCombos: flopSolution.ipCombos.filter(combo => combo.every(card => cardKey(card) !== turnKey)),
+      }
+    })
+    const inner = makeFactory()
+    let precomputedTurnProvider: ReturnType<NodeProviderFactory['forFlop']> | null = null
+    let liveCalls = 0
+    let refineCalls = 0
+    const factory: NodeProviderFactory = {
+      forFlop: (solution, board) => {
+        const real = inner.forFlop(solution, board)
+        precomputedTurnProvider = {
+          ...real,
+          refine: () => { refineCalls++ },
+        }
+        return precomputedTurnProvider
+      },
+      forLiveStreet: (input) => {
+        liveCalls++
+        return inner.forLiveStreet(input)
+      },
+      dispose: () => inner.dispose(),
+    }
+    const waiter = createWaiter()
+    const errors: Error[] = []
+    const controller = new FullHandController({
+      scenario,
+      flop,
+      flopSolution,
+      userSeat: 0,
+      rng: fixedRng([1e-9]),
+      providerFactory: factory,
+      onUpdate: waiter.onUpdate,
+      onError: error => errors.push(error),
+    })
+    controller.start()
+
+    const flopSnap = await waiter.waitForPause()
+    expect(flopSnap.street).toBe('flop')
+    controller.chooseAction('check')
+    const turnSnap = await waiter.waitForPause()
+
+    expect(turnSnap.street).toBe('turn')
+    expect(loadSpy).toHaveBeenCalledWith(expect.objectContaining({
+      scenarioId: 'srp_btn_vs_bb',
+      flopId: 'AsQsJs',
+      pathId: 'check-check',
+    }))
+    expect(loadSpy.mock.calls[0][0].pathId).not.toContain('/')
+    expect(precomputedTurnProvider).not.toBeNull()
+    expect(precomputedTurnProvider!.progress()).toBeNull()
+    expect(liveCalls).toBe(0)
+    expect(refineCalls).toBe(0)
+    expect(errors).toEqual([])
+    controller.dispose()
+  }, 30_000)
+
+  it.each([
+    ['ネットワークエラー', () => Promise.reject(new TypeError('offline'))],
+    ['404', () => Promise.resolve(new Response(null, { status: 404 }))],
+    ['不正バイト列', () => Promise.resolve(new Response(new Uint8Array([1, 2, 3]), { status: 200 }))],
+  ])('%sでは例外を漏らさず従来のターンライブソルブへ退避する', async (_name, responseFactory) => {
+    vi.stubGlobal('fetch', vi.fn().mockImplementation(responseFactory))
+    let precomputedCalls = 0
+    let liveCalls = 0
+    let refineCalls = 0
+    const factory: NodeProviderFactory = {
+      forFlop: () => {
+        precomputedCalls++
+        throw new Error('unexpected precomputed provider')
+      },
+      forLiveStreet: (input) => {
+        liveCalls++
+        return {
+          street: input.street,
+          board: input.board,
+          oopCombos: input.oopCombos,
+          ipCombos: input.ipCombos,
+          ready: Promise.resolve(),
+          async getNodes(nodeIds) {
+            return new Map(nodeIds.map(nodeId => [nodeId, null]))
+          },
+          progress: () => null,
+          refine: () => { refineCalls++ },
+          dispose: () => {},
+        }
+      },
+      dispose: () => {},
+    }
+    const waiter = createWaiter()
+    const errors: Error[] = []
+    const controller = new FullHandController({
+      scenario,
+      flop,
+      flopSolution,
+      userSeat: 0,
+      rng: fixedRng([1e-9]),
+      providerFactory: factory,
+      onUpdate: waiter.onUpdate,
+      onError: error => errors.push(error),
+    })
+    controller.start()
+
+    await waiter.waitForPause()
+    controller.chooseAction('check')
+    const turnSnap = await waiter.waitForPause()
+
+    expect(turnSnap.street).toBe('turn')
+    expect(precomputedCalls).toBe(0)
+    expect(liveCalls).toBe(1)
+    expect(refineCalls).toBe(1)
+    expect(errors).toEqual([])
+    controller.dispose()
+  }, 30_000)
 
   it('フロップ→ターン→リバー通しでoverに到達し、各街に決断が記録され、ボードが3→4→5枚に成長する(配布カード衝突なし)', async () => {
     // userSeat=0(OOP=BB=defender): OOPが各街で先手なので、ユーザーは毎ストリート決断する。

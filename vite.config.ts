@@ -48,6 +48,16 @@ export default defineConfig({
               expiration: { maxEntries: 20, maxAgeSeconds: 60 * 60 * 24 * 30 },
             },
           },
+          {
+            urlPattern: /^https:\/\/huggingface\.co\/datasets\/Kota903\/poker-trainer-gto-turn\/resolve\/main\/.*\.bin$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'gto-turn-bundles',
+              // 1件約4MBのため、端末ストレージを圧迫しないよう直近30局面に絞る。
+              expiration: { maxEntries: 30, maxAgeSeconds: 60 * 60 * 24 * 30 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
         ],
       },
     }),

@@ -1,5 +1,5 @@
 /// <reference types="node" />
-import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { FLOPS, pickWeightedFlop } from '../data/flops'
@@ -111,12 +111,20 @@ describe('daily challenge full-mode determinism (handRng, P11 Phase C)', () => {
   const flop = FLOPS.find((f) => f.cards.join('') === FLOP_STR)
   if (!flop) throw new Error(`flop fixture not found in flops.json: ${FLOP_STR}`)
   let flopSolution: DecodedSolution
+  const originalFetch = globalThis.fetch
 
   beforeAll(async () => {
     const binPath = join(process.cwd(), 'public/gto/solutions/srp_btn_vs_bb', `${FLOP_STR}.bin`)
     const buf = await readFile(binPath)
     const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
     flopSolution = decodeSolutionFile(arrayBuf)
+    // P15 S4: FullHandControllerのターンバンドル取得を実ネットワークへ出さず、
+    // この既存テストが意図するライブソルブの決定性だけを維持する。
+    globalThis.fetch = (async () => new Response(null, { status: 404 })) as typeof fetch
+  })
+
+  afterAll(() => {
+    globalThis.fetch = originalFetch
   })
 
   function makeFactory(): NodeProviderFactory {

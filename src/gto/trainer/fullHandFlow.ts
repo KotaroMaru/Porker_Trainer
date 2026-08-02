@@ -28,7 +28,7 @@ import type { Scenario, FlopDef } from '../types'
 import type { DecodedSolution } from '../loader/binaryFormat'
 import type { TreeNode, DecisionNode, PlayerIdx } from '../solver/cfr'
 import { buildStreetTree, buildTurnSubgameTree } from '../tree/actionTree'
-import { rootNodeId, childNodeId } from '../tree/nodeId'
+import { rootNodeId, childNodeId, buildNodeId } from '../tree/nodeId'
 import { createDeck, cardKey } from '../../engine/deck'
 import { evaluate } from '../../engine/evaluator'
 import { isOopPosition, preflopContribPerPlayerBb } from '../data/scenarios'
@@ -43,6 +43,7 @@ import { boardFromFlop, type Seat } from './gameFlow'
 import { initialWeightsInSolutionOrder, type HistoryEntry, type ReviewData, type ReviewDecision } from './reviewBuilder'
 import type { NodeProviderFactory, StreetNodeProvider, StreetSolveInput } from './nodeDataProvider'
 import { createPrecomputedProvider } from './precomputedProvider'
+import { loadTurnBundleSolution } from '../loader/turnBundleSource'
 
 export type FullHandStreet = 'flop' | 'turn' | 'river'
 export type HandPhase = 'userTurn' | 'botDeciding' | 'grading' | 'over'
@@ -210,6 +211,17 @@ function dealCardExcluding(usedCards: readonly Card[], rng: () => number): Card 
   if (remaining.length === 0) throw new Error('dealCardExcluding: deck exhausted')
   const idx = Math.min(Math.floor(rng() * remaining.length), remaining.length - 1)
   return remaining[idx]
+}
+
+function sameComboOrder(actual: readonly Combo[], expected: readonly Combo[]): boolean {
+  return (
+    actual.length === expected.length &&
+    actual.every(
+      (combo, i) =>
+        cardKey(combo[0]) === cardKey(expected[i][0]) &&
+        cardKey(combo[1]) === cardKey(expected[i][1]),
+    )
+  )
 }
 
 /**
@@ -746,6 +758,8 @@ export class FullHandController {
   }
 
   private async transitionToNextStreet(): Promise<void> {
+    // harvestStreet()がログを空にする前に、実際に辿ったフロップ経路を正規nodeId形式で退避する。
+    const completedFlopPathId = this.street === 'flop' ? buildNodeId(this.streetActionLog.map(action => action.label)) : null
     this.captureTurnRefineMaterialIfNeeded()
     const { oopWeights, ipWeights } = await this.harvestStreet()
     this.commitStreetContribution()
@@ -779,12 +793,43 @@ export class FullHandController {
       effectiveStackBb: this.remainingStackBb,
       ...playSolve,
     }
-    this.provider = this.deps.providerFactory.forLiveStreet(solveInput)
+    const loadedTurnSolution =
+      nextStreet === 'turn' && completedFlopPathId !== null
+        ? await loadTurnBundleSolution({
+            scenarioId: this.deps.scenario.id,
+            flopId: this.deps.flop.cards.join(''),
+            flopCards: newBoard.slice(0, 3),
+            pathId: completedFlopPathId,
+            turnCard: newCard,
+          })
+        : null
+    // 到達レンジの重みはこの順序に対応する。生成物との順序不一致時に別コンボへ
+    // 誤適用すると数値的に破綻するため、その場合も安全にライブソルブへ退避する。
+    const bundledTurnSolution =
+      loadedTurnSolution &&
+      sameComboOrder(loadedTurnSolution.oopCombos, filteredOop.combos) &&
+      sameComboOrder(loadedTurnSolution.ipCombos, filteredIp.combos)
+        ? loadedTurnSolution
+        : null
+
+    if (bundledTurnSolution) {
+      const precomputed = this.deps.providerFactory.forFlop(bundledTurnSolution, newBoard)
+      // forFlopはDecodedSolutionの同期ラッパとして再利用できる。streetメタデータだけは
+      // ターンへ補正し、StreetNodeProviderの公開契約も実際の街と一致させる。
+      this.provider = { ...precomputed, street: 'turn' }
+    } else {
+      this.provider = this.deps.providerFactory.forLiveStreet(solveInput)
+    }
     if (nextStreet === 'turn') {
-      // P9-4: ターンproviderを保持し、プレイ用ソルブのreadyを待つ間から同一セッションの
-      // 背景精密化を予約する。refine()側が初期ソルブ完了後に継続する契約を持つ。
-      this.turnProvider = this.provider
-      this.provider.refine(REFINE_SOLVE)
+      if (bundledTurnSolution) {
+        // 事前計算解は既に精密なので、背景リファイン素材として保持・予約しない。
+        this.turnProvider = null
+      } else {
+        // P9-4: ターンproviderを保持し、プレイ用ソルブのreadyを待つ間から同一セッションの
+        // 背景精密化を予約する。refine()側が初期ソルブ完了後に継続する契約を持つ。
+        this.turnProvider = this.provider
+        this.provider.refine(REFINE_SOLVE)
+      }
     }
 
     const tree =
