@@ -5,6 +5,9 @@ import type { ReviewDecision } from '../trainer/reviewBuilder'
 import type { SpotFeatures } from './features'
 import type { SpotInterpretation } from './interpretation'
 
+export const CLASS_BASELINE_MIN_DELTA_PP = 5
+const BLOCKER_NET_MIN_PP = 5
+
 export type ClaimPolarity = 'supports' | 'opposes' | 'neutral'
 export type ClaimId =
   | 'betProfile'
@@ -39,6 +42,16 @@ function actionCategoryOf(label: string): ActionCategory {
   return 'bet'
 }
 
+function pushDeviationClaim(claims: Claim[], interpretation: SpotInterpretation): void {
+  if (interpretation.deviation.level !== 'outlier') return
+  claims.push({
+    id: 'deviation',
+    polarity: 'supports',
+    priority: 105,
+    data: { deltaPp: interpretation.deviation.deltaPp, drivers: interpretation.deviation.drivers.join(',') },
+  })
+}
+
 function pushBetClaims(claims: Claim[], features: SpotFeatures, interpretation: SpotInterpretation): void {
   const profile = interpretation.betProfile
   if (!profile) return
@@ -52,24 +65,17 @@ function pushBetClaims(claims: Claim[], features: SpotFeatures, interpretation: 
     data: profileData,
   })
 
-  claims.push({
-    id: 'classBaseline',
-    polarity: 'neutral',
-    priority: 70,
-    data: {
-      comboAggPct: features.comboVsClass.comboAggFreq * 100,
-      classAggPct: features.comboVsClass.classAggFreq * 100,
-      deltaPp: features.comboVsClass.deltaPp,
-      rangeContext: interpretation.classBaseline.rangeContextJa ?? '',
-    },
-  })
-
-  if (interpretation.deviation.level === 'outlier') {
+  if (Math.abs(features.comboVsClass.deltaPp) >= CLASS_BASELINE_MIN_DELTA_PP) {
     claims.push({
-      id: 'deviation',
-      polarity: 'supports',
-      priority: 105,
-      data: { deltaPp: interpretation.deviation.deltaPp, drivers: interpretation.deviation.drivers.join(',') },
+      id: 'classBaseline',
+      polarity: 'neutral',
+      priority: 70,
+      data: {
+        comboAggPct: features.comboVsClass.comboAggFreq * 100,
+        classAggPct: features.comboVsClass.classAggFreq * 100,
+        deltaPp: features.comboVsClass.deltaPp,
+        rangeContext: interpretation.classBaseline.rangeContextJa ?? '',
+      },
     })
   }
 
@@ -78,7 +84,7 @@ function pushBetClaims(claims: Claim[], features: SpotFeatures, interpretation: 
   const valuePct = features.blockers.valueCombosReducedPct
   const weakPct = features.blockers.bluffCombosReducedPct
   const netPp = valuePct - weakPct
-  if (Math.abs(netPp) >= 3) {
+  if (Math.abs(netPp) >= BLOCKER_NET_MIN_PP) {
     claims.push({
       id: 'betBlockerNet',
       polarity: netPp > 0 ? 'supports' : 'opposes',
@@ -100,7 +106,7 @@ function pushBetClaims(claims: Claim[], features: SpotFeatures, interpretation: 
 
 function pushCheckClaims(claims: Claim[], decision: ReviewDecision, features: SpotFeatures, interpretation: SpotInterpretation): void {
   const descriptor = interpretation.handDescriptor
-  if (descriptor.drawsJa.length > 0 || descriptor.backdoorsJa.length > 0) {
+  if (decision.boardAtDecision.length < 5 && (descriptor.drawsJa.length > 0 || descriptor.backdoorsJa.length > 0)) {
     claims.push({
       id: 'checkDraw',
       polarity: 'supports',
@@ -118,17 +124,19 @@ function pushCheckClaims(claims: Claim[], decision: ReviewDecision, features: Sp
   if (decision.seat === 0 && (features.handClass === 'MONSTER' || features.handClass === 'STRONG_MADE')) {
     claims.push({ id: 'checkTrap', polarity: 'supports', priority: 80, data: { position: 'OOP' } })
   }
-  claims.push({
-    id: 'classBaseline',
-    polarity: 'neutral',
-    priority: 70,
-    data: {
-      comboAggPct: features.comboVsClass.comboAggFreq * 100,
-      classAggPct: features.comboVsClass.classAggFreq * 100,
-      deltaPp: features.comboVsClass.deltaPp,
-      rangeContext: interpretation.classBaseline.rangeContextJa ?? '',
-    },
-  })
+  if (Math.abs(features.comboVsClass.deltaPp) >= CLASS_BASELINE_MIN_DELTA_PP) {
+    claims.push({
+      id: 'classBaseline',
+      polarity: 'neutral',
+      priority: 70,
+      data: {
+        comboAggPct: features.comboVsClass.comboAggFreq * 100,
+        classAggPct: features.comboVsClass.classAggFreq * 100,
+        deltaPp: features.comboVsClass.deltaPp,
+        rangeContext: interpretation.classBaseline.rangeContextJa ?? '',
+      },
+    })
+  }
 }
 
 function pushMdfClaim(claims: Claim[], features: SpotFeatures, bestLabel: string): void {
@@ -161,7 +169,7 @@ function pushDefenseBlockerClaim(claims: Claim[], features: SpotFeatures, bestLa
   const valuePct = features.blockers.valueCombosReducedPct
   const weakPct = features.blockers.bluffCombosReducedPct
   const netPp = valuePct - weakPct
-  if (Math.abs(netPp) < 3) return
+  if (Math.abs(netPp) < BLOCKER_NET_MIN_PP) return
   const supportsCall = netPp > 0
   claims.push({
     id: 'defenseBlockerNet',
@@ -195,7 +203,7 @@ function pushRaiseRejectionClaim(claims: Claim[], decision: ReviewDecision, feat
   }
   claims.push({
     id: 'raiseRejection',
-    polarity: 'opposes',
+    polarity: 'neutral',
     priority: 30,
     data,
   })
@@ -224,6 +232,7 @@ export function selectClaims(decision: ReviewDecision, features: SpotFeatures, i
     pushStreetStructureClaim(claims, features)
     if (category === 'call') pushRaiseRejectionClaim(claims, decision, features)
   }
+  pushDeviationClaim(claims, interpretation)
   ensureCoverage(claims, decision)
   return claims.sort((a, b) => b.priority - a.priority)
 }

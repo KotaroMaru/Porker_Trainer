@@ -71,4 +71,26 @@ describe('interpretSpot', () => {
     const result = interpretSpot(decision, features({ sdvLevel: 'solid', backdoors: { flush: { has: true, isNut: true }, straight: { has: false, isWheel: false } } }))
     expect(result.handDescriptor.backdoorsJa.join('')).not.toContain('ホイール')
   })
+
+  it('完成役は分類一覧ではなくセット・Aハイフラッシュ・クアッズを具体表示する', () => {
+    expect(interpretSpot(decision, features({ handClass: 'STRONG_MADE', madeHand: { category: 'THREE_OF_A_KIND', highRank: 9, isSet: true } })).handDescriptor.classJa).toBe('セット')
+    expect(interpretSpot(decision, features({ handClass: 'STRONG_MADE', madeHand: { category: 'FLUSH', highRank: 14, isSet: false } })).handDescriptor.classJa).toBe('Aハイのフラッシュ')
+    expect(interpretSpot(decision, features({ handClass: 'MONSTER', madeHand: { category: 'FOUR_OF_A_KIND', highRank: 7, isSet: false } })).handDescriptor.classJa).toBe('クアッズ')
+  })
+
+  it('リバーの未完成ドローをsemiBluff扱いせず、ツートーンをドライと呼ばない', () => {
+    const river = interpretSpot(decision, features({ boardCardCount: 5, draws: { hasFlushDraw: false, hasOESD: true, hasGutshot: false, flushDrawOuts: 0, straightDrawOuts: 8 } }))
+    expect(river.betProfile?.kind).toBe('pureBluff')
+    const twoTone = interpretSpot(decision, features({ boardTexture: { paired: false, suitPattern: 'twoTone', height: 'high', connected: false } }))
+    expect(twoTone.classBaseline.rangeContextJa).toBeNull()
+  })
+
+  it('モノトーン上の低い同スート札は通常のFDと区別する', () => {
+    const result = interpretSpot(decision, features({
+      boardTexture: { paired: false, suitPattern: 'monotone', height: 'high', connected: false },
+      draws: { hasFlushDraw: true, hasOESD: false, hasGutshot: false, flushDrawOuts: 9, straightDrawOuts: 0 },
+      flushDrawHighRank: 6,
+    }))
+    expect(result.handDescriptor.drawsJa).toEqual(['6ハイの低いフラッシュドロー'])
+  })
 })

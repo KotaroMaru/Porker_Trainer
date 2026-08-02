@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { classifyDraws, drawOutCards } from './outs'
 import type { Card } from '../engine/types'
+import { createDeck } from '../engine/deck'
+import { evaluate } from '../engine/evaluator'
 
 function c(rank: number, suit: string): Card {
   return { rank: rank as Card['rank'], suit: suit as Card['suit'] }
@@ -9,6 +11,36 @@ function c(rank: number, suit: string): Card {
 function cardKey(c: Card): string {
   return `${c.rank}${c.suit}`
 }
+
+function exhaustiveStraightOuts(hole: readonly Card[], board: readonly Card[]): number {
+  const known = [...hole, ...board]
+  const knownKeys = new Set(known.map(cardKey))
+  const straightOrBetter = new Set(['STRAIGHT', 'FLUSH', 'FULL_HOUSE', 'FOUR_OF_A_KIND', 'STRAIGHT_FLUSH', 'ROYAL_FLUSH'])
+  return createDeck().filter((card) => !knownKeys.has(cardKey(card)) && straightOrBetter.has(evaluate([...known, card]).category)).length
+}
+
+describe('classifyDraws - 残りデッキ全列挙との交差検証', () => {
+  const cases = [
+    { name: 'K♣K♦ / A♠Q♠J♠', hole: [c(13, 'c'), c(13, 'd')], board: [c(14, 's'), c(12, 's'), c(11, 's')], outs: 4, kind: 'gutshot' },
+    { name: 'A♣K♦ / Q♠J♥2♦', hole: [c(14, 'c'), c(13, 'd')], board: [c(12, 's'), c(11, 'h'), c(2, 'd')], outs: 4, kind: 'gutshot' },
+    { name: 'A♣2♦ / 3♠4♥9♦', hole: [c(14, 'c'), c(2, 'd')], board: [c(3, 's'), c(4, 'h'), c(9, 'd')], outs: 4, kind: 'gutshot' },
+    { name: '6♣5♦ / 4♠3♥K♦', hole: [c(6, 'c'), c(5, 'd')], board: [c(4, 's'), c(3, 'h'), c(13, 'd')], outs: 8, kind: 'oesd' },
+    { name: 'J♣T♦ / 9♠8♥2♦', hole: [c(11, 'c'), c(10, 'd')], board: [c(9, 's'), c(8, 'h'), c(2, 'd')], outs: 8, kind: 'oesd' },
+    { name: '5♣4♦ / A♠2♥K♦', hole: [c(5, 'c'), c(4, 'd')], board: [c(14, 's'), c(2, 'h'), c(13, 'd')], outs: 4, kind: 'gutshot' },
+  ] as const
+
+  for (const testCase of cases) {
+    it(`${testCase.name}: 実カード全列挙と一致する`, () => {
+      const draws = classifyDraws([...testCase.hole], [...testCase.board])
+      const cards = drawOutCards([...testCase.hole], [...testCase.board]).straight
+      expect(exhaustiveStraightOuts(testCase.hole, testCase.board)).toBe(testCase.outs)
+      expect(draws.straightDrawOuts).toBe(testCase.outs)
+      expect(cards).toHaveLength(testCase.outs)
+      expect(draws.hasOESD).toBe(testCase.kind === 'oesd')
+      expect(draws.hasGutshot).toBe(testCase.kind === 'gutshot')
+    })
+  }
+})
 
 describe('drawOutCards - フラッシュドロー', () => {
   it('4枚スーテッドのフラッシュドローは該当スートの残り9枚を返す', () => {
@@ -71,7 +103,7 @@ describe('drawOutCards - ストレートドロー(ガットショット)', () =>
     for (const card of straight) expect(card.rank).toBe(12) // Q
   })
 
-  it('ホイール(A-5)ガットショットは仮想ランク1ではなくA(14)の実カードを返す', () => {
+  it('Aと6の両側で完成する形は実在ランク14と6を返す', () => {
     // A,4 hole, board 3,2,9 → need a 5 to complete A-2-3-4-5 (wheel), but missing endpoint is "ace低位"なので
     // 実際には A は既知なので "ace低位"の欠け方向ではなく5が欠けるパターンを使う。
     // ここでは A が未知側になるケース: 4,3 hole, board 5,2,9 → need A or 6 (OESD: A-2-3-4-5-6 window)

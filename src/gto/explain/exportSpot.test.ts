@@ -13,6 +13,8 @@ import { decodeSolutionFile, type DecodedSolution } from '../loader/binaryFormat
 import { getScenario } from '../data/scenarios'
 import { FLOPS } from '../data/flops'
 import type { FlopDef } from '../types'
+import type { Combo } from '../../analysis/range'
+import { cardKey, createDeck } from '../../engine/deck'
 
 const FLOP_STR = 'AsQsJs'
 
@@ -109,6 +111,41 @@ describe('buildSpotMarkdown (実.binフィクスチャによる統合テスト)'
 
     expect(md).toContain('ストリート: フロップ')
     expect(md).toContain('この決断時点のボード')
+  })
+
+  it('相手レンジ要約からヒーローの実カードと衝突するコンボを除外する', () => {
+    const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+    const chosenLabel = spot.decodedNode.actionLabels[0]
+    const grading = applyUserAction(spot, chosenLabel)
+    const review = buildReview(spot, grading, chosenLabel)
+    const knownKeys = new Set([...review.userCombo, ...review.board].map(cardKey))
+    const otherCard = createDeck().find((card) => !knownKeys.has(cardKey(card)))
+    if (!otherCard) throw new Error('test card is missing')
+    const blockedCombo: Combo = [review.userCombo[0], otherCard]
+    const decision = { ...review.decisions[0], villainCombos: [blockedCombo], villainWeights: [1] }
+    const md = buildSpotMarkdown({ ...review, decisions: [decision] }, 0, null, null)
+    const villainSection = md.split('### 相手側\n')[1]?.split('\n\n## 特徴量')[0]
+
+    expect(villainSection).toBe('(レンジ情報なし)')
+  })
+
+  it('通しレビューのフロップexportへターン・リバー情報を漏らさない', () => {
+    const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
+    const chosenLabel = spot.decodedNode.actionLabels[0]
+    const grading = applyUserAction(spot, chosenLabel)
+    const review = buildReview(spot, grading, chosenLabel)
+    const fullReview = {
+      ...review,
+      board: [...review.board, { rank: 2 as const, suit: 'd' as const }, { rank: 3 as const, suit: 'h' as const }],
+      history: [
+        ...review.history,
+        { street: 'turn' as const, position: review.botPosition, label: 'future-turn-action', isUserDecision: false },
+        { street: 'river' as const, position: review.botPosition, label: 'future-river-action', isUserDecision: false },
+      ],
+    }
+    const md = buildSpotMarkdown(fullReview, 0, null, null)
+
+    expect(md).not.toMatch(/2♦|3♥|future-turn-action|future-river-action/)
   })
 
   it('存在しないdecisionIndexを渡すとエラーを投げる', () => {

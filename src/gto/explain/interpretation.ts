@@ -2,6 +2,7 @@
 // ソルバーの「意図」は推測せず、観測できる頻度・エクイティ・カード構造だけを記述する。
 
 import type { HandStrength } from '../../advisor/postflop'
+import { rankName } from '../../engine/deck'
 import type { ReviewDecision } from '../trainer/reviewBuilder'
 import type { SdvLevel, SpotFeatures, WeakPairSubtype } from './features'
 
@@ -85,12 +86,26 @@ const WEAK_PAIR_LABEL_JA: Record<WeakPairSubtype, string> = {
 function handClassJa(features: SpotFeatures): string {
   if (features.handClass === 'AIR') return SDV_LABEL_JA[features.sdvLevel]
   if (features.handClass === 'WEAK_PAIR' && features.weakPairSubtype) return WEAK_PAIR_LABEL_JA[features.weakPairSubtype]
+  if ((features.handClass === 'STRONG_MADE' || features.handClass === 'MONSTER') && features.madeHand) {
+    const { category, highRank, isSet } = features.madeHand
+    if (category === 'TWO_PAIR') return 'ツーペア'
+    if (category === 'THREE_OF_A_KIND') return isSet ? 'セット' : 'トリップス'
+    if (category === 'STRAIGHT') return 'ストレート'
+    if (category === 'FLUSH') return `${rankName(highRank)}ハイのフラッシュ`
+    if (category === 'FULL_HOUSE') return 'フルハウス'
+    if (category === 'FOUR_OF_A_KIND') return 'クアッズ'
+    if (category === 'STRAIGHT_FLUSH') return 'ストレートフラッシュ'
+    if (category === 'ROYAL_FLUSH') return 'ロイヤルフラッシュ'
+  }
   return BASELINE_CLASS_JA[features.handClass]
 }
 
 function describeHand(features: SpotFeatures): HandDescriptor {
   const drawsJa: string[] = []
-  if (features.draws.hasFlushDraw) drawsJa.push('フラッシュドロー')
+  if (features.draws.hasFlushDraw) {
+    const weakMonotoneDraw = features.boardTexture.suitPattern === 'monotone' && features.flushDrawHighRank !== null && features.flushDrawHighRank !== undefined && features.flushDrawHighRank <= 9
+    drawsJa.push(weakMonotoneDraw ? `${rankName(features.flushDrawHighRank!)}ハイの低いフラッシュドロー` : 'フラッシュドロー')
+  }
   if (features.draws.hasOESD) drawsJa.push('オープンエンドストレートドロー')
   else if (features.draws.hasGutshot) drawsJa.push('ガットショット')
 
@@ -132,8 +147,8 @@ export function interpretBetProfile(label: string, features: SpotFeatures): BetP
   if (features.sdvLevel !== 'none') {
     return { forLabel: label, kind: 'protection', valueThickness: null, continueEquity, foldFreq, targetsToShow: 'folded' }
   }
-  const hasDraw = features.draws.hasFlushDraw || features.draws.hasOESD || features.draws.hasGutshot
-  const hasBackdoor = features.backdoors.flush.has || features.backdoors.straight.has
+  const hasDraw = features.boardCardCount !== 5 && (features.draws.hasFlushDraw || features.draws.hasOESD || features.draws.hasGutshot)
+  const hasBackdoor = features.boardCardCount !== 5 && (features.backdoors.flush.has || features.backdoors.straight.has)
   if (hasDraw || hasBackdoor) {
     return { forLabel: label, kind: 'semiBluff', valueThickness: null, continueEquity, foldFreq, targetsToShow: 'folded' }
   }
@@ -145,7 +160,7 @@ function buildClassBaseline(features: SpotFeatures): SpotInterpretation['classBa
   const mixJa = top ? `${top.label} ${Math.round(top.freq * 100)}%` : 'データ不足'
   const hasRangeAdvantage = features.rangeAdvantage.heroAvg > features.rangeAdvantage.villainAvg + 0.03
   const hasNutsAdvantage = features.nutsAdvantage.heroTopPct > features.nutsAdvantage.villainTopPct + 3
-  const dry = !features.boardTexture.connected && features.boardTexture.suitPattern !== 'monotone'
+  const dry = !features.boardTexture.connected && features.boardTexture.suitPattern === 'rainbow'
   const rangeContextJa =
     hasRangeAdvantage && hasNutsAdvantage && features.streetStructure.villainCheckedToHero === true && dry
       ? 'レンジ優位とナッツ優位があり、相手のチェック後のドライなボードです'

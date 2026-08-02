@@ -217,12 +217,16 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
   // 絞り込み後に確定した型のconstへ束縛し直す。
   const flop: FlopDef = flopOrUndefined
   let solution: DecodedSolution
+  let blockerSolution: DecodedSolution
+  const blockerFlop = FLOPS.find((candidate) => candidate.cards.join('') === 'AsKs9c') as FlopDef
 
   beforeAll(async () => {
     const binPath = join(process.cwd(), 'public/gto/solutions/srp_btn_vs_bb', FLOP_STR + '.bin')
     const buf = await readFile(binPath)
     const arrayBuf = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
     solution = decodeSolutionFile(arrayBuf)
+    const blockerBuf = await readFile(join(process.cwd(), 'public/gto/solutions/srp_btn_vs_bb/AsKs9c.bin'))
+    blockerSolution = decodeSolutionFile(blockerBuf.buffer.slice(blockerBuf.byteOffset, blockerBuf.byteOffset + blockerBuf.byteLength))
   })
 
   function buildFacingBetSpot() {
@@ -258,6 +262,45 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
   }
 
   describe('ルートノード(open decision)', () => {
+    it('実bin回帰: 9♥9♠ on A♠K♠9♣では相手の不可能な99をターゲットへ含めない', () => {
+      const tree = buildStreetTree({ potBb: scenario.potBb, effectiveStackBb: scenario.effectiveStackBb, firstToAct: 0 })
+      if (tree.kind !== 'decision') throw new Error('root node is not a decision node')
+      const checkIndex = tree.actionLabels.indexOf('check')
+      const decisionNode = tree.children[checkIndex]
+      const decodedNode = blockerSolution.nodes.get('check')
+      if (!decodedNode || decisionNode.kind !== 'decision') throw new Error('blocker fixture check node is missing')
+      const userCombo = blockerSolution.ipCombos.find((combo) => combo.some((c) => cardKey(c) === '9h') && combo.some((c) => cardKey(c) === '9s'))
+      if (!userCombo) throw new Error('9h9s is missing from blocker fixture')
+      const userKeys = new Set(userCombo.map(cardKey))
+      const botCombo = blockerSolution.oopCombos.find((combo) => !combo.some((c) => userKeys.has(cardKey(c))))
+      if (!botCombo) throw new Error('non-colliding bot combo is missing')
+      const baseSpot = { scenario, flop: blockerFlop, solution: blockerSolution, userSeat: 1 as const, userCombo, botCombo, decisionNode, decodedNode, nodeId: 'check', botActionsBefore: [{ nodeId: '', label: 'check' }], actionsWithAmounts: actionLabelsWithAmounts(decisionNode) }
+
+      const initialReview = buildReview(baseSpot, applyUserAction(baseSpot, decodedNode.actionLabels[0]), decodedNode.actionLabels[0])
+      const initialDecision = initialReview.decisions[0]
+      const totalWeight = initialDecision.villainWeights.reduce((sum, weight) => sum + weight, 0)
+      const collidingWeight = initialDecision.villainWeights.reduce(
+        (sum, weight, index) => sum + (initialDecision.villainCombos[index].some((c) => userKeys.has(cardKey(c))) ? weight : 0),
+        0,
+      )
+      // 実測12.28%の不可能コンボを除外した後、各応答頻度を残る母集団で再正規化する。
+      expect((collidingWeight / totalWeight) * 100).toBeCloseTo(12.28, 1)
+
+      for (const chosenLabel of decodedNode.actionLabels.filter((label) => label !== 'check')) {
+        const grading = applyUserAction(baseSpot, chosenLabel)
+        const review = buildReview(baseSpot, grading, chosenLabel)
+        const features = computeSpotFeatures(review, 0)
+        for (const target of [features.targets?.chosen, features.targets?.best]) {
+          expect(target?.foldedHands.map((hand) => hand.hand) ?? []).not.toContain('99')
+          expect(target?.continueWeakHands.map((hand) => hand.hand) ?? []).not.toContain('99')
+        }
+        for (const response of features.responses) {
+          expect(response.breakdown.every((entry) => Number.isFinite(entry.freq) && entry.freq >= 0)).toBe(true)
+          if (response.breakdown.length > 0) expect(response.breakdown.reduce((sum, entry) => sum + entry.freq, 0)).toBeCloseTo(1, 3)
+        }
+      }
+    })
+
     it('nodeContext=root、mdf/potOddsRequiredEqはnull', () => {
       const spot = createSpot(scenario, flop, solution, 0, fixedRng([0.1]))
       const chosenLabel = spot.decodedNode.actionLabels[0]
@@ -345,7 +388,11 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       expect(foldIdx).toBeGreaterThanOrEqual(0)
 
       const foldFreqs = decision.villainCombos.map((_, index) => rn!.node.freqs[foldIdx * decision.villainCombos.length + index])
-      const unnormalizedContinue = decision.villainWeights.map((weight, index) => weight * Math.max(1 - foldFreqs[index], RANGE_TRACKER_EPSILON))
+      const userKeys = new Set(review.userCombo.map(cardKey))
+      const unnormalizedContinue = decision.villainWeights.map((weight, index) => {
+        const collides = decision.villainCombos[index].some((comboCard) => userKeys.has(cardKey(comboCard)))
+        return collides ? 0 : weight * Math.max(1 - foldFreqs[index], RANGE_TRACKER_EPSILON)
+      })
       const continueTotal = unnormalizedContinue.reduce((sum, weight) => sum + weight, 0)
       const continueWeights = unnormalizedContinue.map((weight) => weight / continueTotal)
       // 本体とは独立した呼び出しで、ヒーロー実コンボ視点の各villainコンボEQを照合する。
@@ -361,7 +408,6 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       const expectedValue = new Map<string, { comboCount: number; weight: number }>()
       let expectedValueWeight = 0
       let blockedComboCount = 0
-      const userKeys = new Set(review.userCombo.map(cardKey))
       for (let i = 0; i < decision.villainCombos.length; i++) {
         const collides = decision.villainCombos[i].some((comboCard) => userKeys.has(cardKey(comboCard)))
         if (collides && decision.villainWeights[i] > 0) {
@@ -381,6 +427,7 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       const expectedBluff = new Map<string, { comboCount: number; weight: number }>()
       let expectedBluffWeight = 0
       for (let i = 0; i < decision.villainCombos.length; i++) {
+        if (decision.villainCombos[i].some((comboCard) => userKeys.has(cardKey(comboCard)))) continue
         const foldWeight = decision.villainWeights[i] * foldFreqs[i]
         if (foldWeight <= 0) continue
         const hand = handStrFromCombo(decision.villainCombos[i])
@@ -503,7 +550,9 @@ describe('computeSpotFeatures (実.binフィクスチャによる統合テスト
       const foldIdx = node.actionLabels.indexOf('fold')
       let foldSum = 0
       let weightSum = 0
+      const userKeys = new Set(review.userCombo.map(cardKey))
       for (let h = 0; h < handCount; h++) {
+        if (decision.villainCombos[h].some((comboCard) => userKeys.has(cardKey(comboCard)))) continue
         foldSum += decision.villainWeights[h] * (foldIdx >= 0 ? node.freqs[foldIdx * handCount + h] : 0)
         weightSum += decision.villainWeights[h]
       }

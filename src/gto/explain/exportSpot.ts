@@ -5,7 +5,7 @@
 // null許容とする。
 
 import type { Combo } from '../../analysis/range'
-import { cardLabel } from '../../engine/deck'
+import { cardKey, cardLabel } from '../../engine/deck'
 import { handStrFromCombo, type ReviewData, type ReviewDecision } from '../trainer/reviewBuilder'
 import type { SpotFeatures } from './features'
 import { selectClaims, type Claim } from './evidence'
@@ -39,14 +39,19 @@ function streetJa(street: ReviewDecision['street']): string {
 }
 
 function pct(v: number): string {
-  return (v * 100).toFixed(1) + '%'
+  return fixed(v * 100, 1) + '%'
+}
+
+function fixed(v: number, digits: number): string {
+  const rounded = Number(v.toFixed(digits))
+  return (Object.is(rounded, -0) ? 0 : rounded).toFixed(digits)
 }
 
 /** weight>0のコンボをhandStrFromComboで集計し、そのレンジ内シェア(%)を降順で列挙する。 */
-function summarizeRange(combos: readonly Combo[], weights: readonly number[]): string {
+function summarizeRange(combos: readonly Combo[], weights: readonly number[], blockedKeys?: ReadonlySet<string>): string {
   const byHand = new Map<string, number>()
   for (let i = 0; i < combos.length; i++) {
-    if (weights[i] <= 0) continue
+    if (weights[i] <= 0 || (blockedKeys && combos[i].some((card) => blockedKeys.has(cardKey(card))))) continue
     const hand = handStrFromCombo(combos[i])
     byHand.set(hand, (byHand.get(hand) ?? 0) + weights[i])
   }
@@ -54,12 +59,13 @@ function summarizeRange(combos: readonly Combo[], weights: readonly number[]): s
   if (total <= 0) return '(レンジ情報なし)'
   return [...byHand.entries()]
     .sort((a, b) => b[1] - a[1])
-    .map(([hand, w]) => `${hand} ${((w / total) * 100).toFixed(0)}%`)
+    .filter(([, w]) => (w / total) * 100 >= 0.5)
+    .map(([hand, w]) => `${hand} ${fixed((w / total) * 100, 0)}%`)
     .join(', ')
 }
 
 function buildStrategyTable(decision: ReviewDecision): string {
-  const rows = decision.grading.actionBreakdown.map((a) => `| ${actionJa(a.label)} | ${pct(a.freq)} | ${a.evBb.toFixed(2)}bb |`)
+  const rows = decision.grading.actionBreakdown.map((a) => `| ${actionJa(a.label)} | ${pct(a.freq)} | ${fixed(a.evBb, 2)}bb |`)
   return ['| アクション | 頻度 | EV |', '|---|---|---|', ...rows].join('\n')
 }
 
@@ -121,9 +127,12 @@ export function buildSpotMarkdown(
   if (!decision) throw new Error(`buildSpotMarkdown: no decision at index ${decisionIdx}`)
   const interpretation = features ? (sharedInterpretation ?? interpretSpot(decision, features)) : null
 
-  const boardStr = review.board.map(cardLabel).join(' ')
+  const boardStr = decision.boardAtDecision.map(cardLabel).join(' ')
   const userComboStr = review.userCombo.map(cardLabel).join(' ')
-  const historyLines = review.history.map((h) => `- [${h.street}] ${h.position}: ${h.label}${h.isUserDecision ? '(あなたの決断)' : ''}`)
+  const decisionHistoryIndex = review.history.findIndex((entry) => entry.isUserDecision && entry.decisionIndex === decisionIdx)
+  const historyAtDecision = decisionHistoryIndex >= 0 ? review.history.slice(0, decisionHistoryIndex + 1) : review.history
+  const historyLines = historyAtDecision.map((h) => `- [${h.street}] ${h.position}: ${h.label}${h.isUserDecision ? '(あなたの決断)' : ''}`)
+  const userKeys = new Set(review.userCombo.map(cardKey))
 
   // decision.seatは常にユーザーのシート(reviewBuilder.buildReviewの実装契約)。
   const heroLabel = review.userPosition
@@ -151,7 +160,7 @@ export function buildSpotMarkdown(
     `この決断時点のボード: ${decision.boardAtDecision.map(cardLabel).join(' ')}`,
     `手番: ${heroLabel}(相手: ${villainLabel})`,
     `選択したアクション: ${actionJa(decision.chosenLabel)}`,
-    `判定: ${decision.grading.verdict}(EVロス ${decision.grading.evLossBb.toFixed(2)}bb、最善手: ${actionJa(decision.grading.bestLabel)})`,
+    `判定: ${decision.grading.verdict}(EVロス ${fixed(decision.grading.evLossBb, 2)}bb、最善手: ${actionJa(decision.grading.bestLabel)})`,
     '',
     '## GTO戦略(このノード)',
     buildStrategyTable(decision),
@@ -160,7 +169,7 @@ export function buildSpotMarkdown(
     `### 自分側`,
     summarizeRange(decision.heroCombos, decision.heroWeights),
     `### 相手側`,
-    summarizeRange(decision.villainCombos, decision.villainWeights),
+    summarizeRange(decision.villainCombos, decision.villainWeights, userKeys),
     '',
     '## 特徴量(生の数値、外部AIによる独自検証用)',
     buildFeaturesSection(features, interpretation),

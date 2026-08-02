@@ -3,7 +3,7 @@
 // ここでは「そのエクイティをどう解釈するか(パーセンタイル・優位判定・ブロッカー
 // 減少率・MDF等)」に専念する。
 
-import type { Card } from '../../engine/types'
+import type { Card, HandCategory } from '../../engine/types'
 import type { Combo } from '../../analysis/range'
 import { cardKey } from '../../engine/deck'
 import { evaluate } from '../../engine/evaluator'
@@ -106,11 +106,17 @@ export interface SpotFeatures {
   nodeContext: NodeContext
   boardTexture: BoardTexture
   handClass: HandStrength
+  /** 表示側が分類名ではなく実際の完成役を説明するための評価結果。 */
+  madeHand?: { category: HandCategory; highRank: Card['rank']; isSet: boolean }
+  /** リバーで将来の改善を示唆しないための決断時ボード枚数。 */
+  boardCardCount?: number
   /** 現在の相手レンジに対して、実手札が現時点で勝っている割合を3段階化した単一定義。 */
   sdvLevel: SdvLevel
   /** handClass==='WEAK_PAIR'の場合のみ非null(P13 Phase B-2い)。 */
   weakPairSubtype: WeakPairSubtype | null
   draws: ReturnType<typeof classifyDraws>
+  /** フラッシュドローを構成するヒーロー側の最高ランク。該当カードが無ければnull。 */
+  flushDrawHighRank?: Card['rank'] | null
   /** classifyDraws()とは独立した、フロップ限定のランナーランナー候補。 */
   backdoors: Backdoors
   heroComboEquity: number
@@ -250,12 +256,17 @@ function computeNodeContext(decision: ReviewDecision): NodeContext {
 }
 
 /** 応答ノードのvillain加重アクション内訳を求める(相手の実際のコンボ分布で重み付けした頻度)。 */
-function computeResponseBreakdown(decision: ReviewDecision, node: DecodedNode): { label: string; freq: number }[] {
+function collidesWithCombo(combo: Combo, keys: ReadonlySet<string>): boolean {
+  return combo.some((card) => keys.has(cardKey(card)))
+}
+
+function computeResponseBreakdown(decision: ReviewDecision, node: DecodedNode, userKeys: ReadonlySet<string>): { label: string; freq: number }[] {
   const handCount = decision.villainCombos.length
-  const weightSum = decision.villainWeights.reduce((a, b) => a + b, 0)
+  const legalWeights = decision.villainWeights.map((weight, index) => (collidesWithCombo(decision.villainCombos[index], userKeys) ? 0 : weight))
+  const weightSum = legalWeights.reduce((a, b) => a + b, 0)
   return node.actionLabels.map((label, a) => {
     let s = 0
-    for (let h = 0; h < handCount; h++) s += decision.villainWeights[h] * node.freqs[a * handCount + h]
+    for (let h = 0; h < handCount; h++) s += legalWeights[h] * node.freqs[a * handCount + h]
     return { label, freq: weightSum > 0 ? s / weightSum : 0 }
   })
 }
@@ -282,6 +293,8 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
   const bestLabel = decision.grading.bestLabel
   const chosenLabel = decision.chosenLabel
   const handCount = decision.villainCombos.length
+  const userKeys = new Set(userCombo.map(cardKey))
+  const legalVillainWeights = decision.villainWeights.map((weight, index) => (collidesWithCombo(decision.villainCombos[index], userKeys) ? 0 : weight))
   const actionTargets = new Map<string, ActionTargets>()
 
   const responses = decision.decodedNode.actionLabels.map((label) => {
@@ -290,7 +303,7 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
       return { forLabel: label, terminal: true, breakdown: [], foldFreq: 0, heroEquityVsContinueRange: null }
     }
     const node = rn.node
-    const breakdown = computeResponseBreakdown(decision, node)
+    const breakdown = computeResponseBreakdown(decision, node, userKeys)
     const foldFreq = breakdown.find((b) => b.label === 'fold')?.freq ?? 0
 
     let heroEquityVsContinueRange: number | null = null
@@ -301,7 +314,7 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
         const foldF = foldIdx >= 0 ? node.freqs[foldIdx * handCount + h] : 0
         nonFoldFreqPerCombo.push(1 - foldF)
       }
-      const continueWeights = updateRangeWeights([...decision.villainWeights], nonFoldFreqPerCombo)
+      const continueWeights = updateRangeWeights(legalVillainWeights, nonFoldFreqPerCombo)
       const eqResult = computeSharedRunoutEquity({
         heroCombos: [userCombo],
         heroWeights: [1],
@@ -317,10 +330,10 @@ function computeResponses(decision: ReviewDecision, userCombo: Combo): { respons
         const continueWeakHands = aggregateTargetHands(
           decision.villainCombos,
           continueWeights,
-          (index) => !Number.isNaN(eqResult.villainEquity[index]) && eqResult.villainEquity[index] < VALUE_TARGET_EQUITY_THRESHOLD,
+          (index) => !collidesWithCombo(decision.villainCombos[index], userKeys) && !Number.isNaN(eqResult.villainEquity[index]) && eqResult.villainEquity[index] < VALUE_TARGET_EQUITY_THRESHOLD,
         )
-        const foldWeights = decision.villainWeights.map((weight, index) => weight * node.freqs[foldIdx * handCount + index])
-        const foldedHands = aggregateTargetHands(decision.villainCombos, foldWeights)
+        const foldWeights = legalVillainWeights.map((weight, index) => weight * node.freqs[foldIdx * handCount + index])
+        const foldedHands = aggregateTargetHands(decision.villainCombos, foldWeights, (index) => !collidesWithCombo(decision.villainCombos[index], userKeys))
         actionTargets.set(label, { forLabel: label, continueWeakHands, foldedHands })
       }
     }
@@ -507,7 +520,21 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
   const boardTexture = classifyBoardTexture(board)
 
   const handClass = classifyHandStrength(userCombo, board)
+  const evaluated = evaluate([...userCombo, ...board])
+  const madeHand = {
+    category: evaluated.category,
+    highRank: Math.max(...evaluated.cards.map((card) => card.rank)) as Card['rank'],
+    isSet:
+      evaluated.category === 'THREE_OF_A_KIND' &&
+      userCombo[0].rank === userCombo[1].rank &&
+      evaluated.cards.filter((card) => card.rank === userCombo[0].rank).length === 3,
+  }
   const draws = classifyDraws(userCombo, board)
+  const suitCounts = new Map<Card['suit'], number>()
+  ;[...userCombo, ...board].forEach((card) => suitCounts.set(card.suit, (suitCounts.get(card.suit) ?? 0) + 1))
+  const flushDrawSuit = draws.hasFlushDraw ? [...suitCounts.entries()].find(([, count]) => count === 4)?.[0] : undefined
+  const flushDrawRanks = flushDrawSuit ? userCombo.filter((card) => card.suit === flushDrawSuit).map((card) => card.rank) : []
+  const flushDrawHighRank = flushDrawRanks.length > 0 ? (Math.max(...flushDrawRanks) as Card['rank']) : null
   const backdoors = classifyBackdoors(userCombo, board)
   const weakPairSubtype = handClass === 'WEAK_PAIR' ? classifyWeakPairSubtype(draws) : null
 
@@ -614,9 +641,12 @@ export function computeSpotFeatures(review: ReviewData, decisionIdx: number): Sp
     nodeContext,
     boardTexture,
     handClass,
+    madeHand,
+    boardCardCount: board.length,
     sdvLevel,
     weakPairSubtype,
     draws,
+    flushDrawHighRank,
     backdoors,
     heroComboEquity,
     currentShowdown,

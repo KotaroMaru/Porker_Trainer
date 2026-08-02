@@ -75,7 +75,7 @@ describe('selectClaims: call/fold', () => {
   })
 
   it('根拠が不足する場合は不足Claimを明示し、合計2件を保証する', () => {
-    const result = claims('fold', { mdf: null, potOddsRequiredEq: null, sdvLevel: 'none' })
+    const result = claims('fold', { mdf: null, potOddsRequiredEq: null, sdvLevel: 'none', comboVsClass: { comboAggFreq: 0.4, classAggFreq: 0.4, deltaPp: 0 } })
     expect(result.map((claim) => claim.id)).toEqual(['frequencyReference', 'insufficientEvidence'])
   })
 })

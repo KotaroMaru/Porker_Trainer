@@ -156,6 +156,15 @@ describe('buildExplanation: 網羅マトリクステスト(root/facingBet × cor
 })
 
 describe('buildExplanation: アクションカテゴリ別の理由段落分岐', () => {
+  it('EVが近くても片方が1%未満なら「混ぜます」と説明しない', () => {
+    const decision = buildSyntheticDecision('root', 'marginal')
+    decision.grading.actionBreakdown = decision.grading.actionBreakdown.map((action) =>
+      action.label === decision.grading.bestLabel ? { ...action, freq: 0 } : action,
+    )
+    const text = buildExplanation(decision, buildSyntheticFeatures('root', 'AIR')).paragraphs.join('\n')
+    expect(text).not.toContain('混ぜます')
+  })
+
   // P13 Phase D-2: ベットターゲット(TT・99からバリューを狙う、等)は専用パネル
   // (BetIntentPanel、Phase C)へ移設し、解説文の理由段落からは重複を避けるため削除した。
   // ボードテクスチャの一般論的な一文(「ストレートが増えやすく」等)も、D-1の証拠選択層
