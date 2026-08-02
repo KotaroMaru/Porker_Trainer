@@ -1,9 +1,24 @@
 name: GTO Turn Bundle Generation
 
-# P15 S3: srp_btn_vs_bbの95フロップ×上位4経路を20シャードで生成する。
+# P15 S3: srp_btn_vs_bbの95フロップ×ターン解が必要な全9経路を20シャードで生成する。
 # 手動起動専用。生成済み判定は.binの存在ではなく、各ターンの収束値を持つmanifestを使う。
+#
+# 経路一覧は src/gto/tree/actionTree.ts のフロップ木から導かれる「showdown終端のうち
+# オールインを含まないもの」と一致する(オールイン経路はランアウトのみで決断が無く、
+# ターン解を必要としない)。src/gto/tree/turnPaths.test.ts が本ファイルの既定値と
+# 木の列挙結果の一致を検査しているので、木を変更したらここも追従すること。
+#
+# 所要時間の目安: 1バンドル(49ターン)がGitHubの4コアランナーで約350秒。
+# 全9経路だと1シャードあたり43バンドル≒4.2時間で、6時間上限に対して余裕が少ない。
+# 余裕を持たせたい場合は paths 入力で経路を分割して複数回に分けて実行する
+# (manifestとHF上の既存バンドルからresumeするため、分割しても再計算は起きない)。
 on:
   workflow_dispatch:
+    inputs:
+      paths:
+        description: '生成するフロップ経路(スペース区切り)。既定は全9経路。'
+        required: false
+        default: 'check-check check-bet33-call check-bet33-raise55-call check-bet75-call check-bet75-raise55-call bet33-call bet33-raise55-call bet75-call bet75-raise55-call'
 
 permissions:
   id-token: write
@@ -12,6 +27,7 @@ permissions:
 env:
   SCENARIO_ID: srp_btn_vs_bb
   HF_REPO_ID: Kota903/poker-trainer-gto-turn
+  TURN_PATHS: ${{ inputs.paths }}
 
 jobs:
   solve:
@@ -60,7 +76,7 @@ jobs:
           while IFS= read -r flop; do
             [ -z "$flop" ] && continue
             mkdir -p "$ROOT/$flop"
-            for path in check-check check-bet33-call bet75-call bet33-call; do
+            for path in $TURN_PATHS; do
               curl -fsSL --retry 3 \
                 "https://huggingface.co/datasets/$HF_REPO_ID/resolve/main/$SCENARIO_ID/$flop/$path.bin" \
                 -o "$ROOT/$flop/$path.bin" || rm -f "$ROOT/$flop/$path.bin"
@@ -77,7 +93,7 @@ jobs:
           FAILED=0
           while IFS= read -r flop; do
             [ -z "$flop" ] && continue
-            for path in check-check check-bet33-call bet75-call bet33-call; do
+            for path in $TURN_PATHS; do
               echo "=== solving $SCENARIO_ID/$flop/$path ==="
               if ! /usr/bin/time -v ./target/release/precompute \
                 --scenario "scenarios/$SCENARIO_ID.json" \
