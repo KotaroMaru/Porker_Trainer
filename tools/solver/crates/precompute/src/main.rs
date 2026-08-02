@@ -19,6 +19,7 @@
 //! 使い方(P15 S2: 49枚のターン解を1バンドルへ出力):
 //!   precompute --scenario <scenario.json> --flop <flop> --flop-path <action-path>
 //!     --bundle-out <file.bin> [--flop-solution <flop.bin>]
+//!     [--bundle-manifest <manifest.json> --resume]
 //!     [--max-iter 300] [--target-expl 0.003]
 //!
 //! 出力: <out>/<scenarioId>/<flop>.bin (FORMAT.md準拠)
@@ -49,6 +50,57 @@ struct ManifestEntry {
     bytes: usize,
 }
 
+/// ターンバンドルは49局面すべての収束値を保持する。ファイルの存在だけでは、古い
+/// 収束条件で生成されたデータと区別できないため、resumeはこの記録を正とする。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BundleManifestEntry {
+    flop: String,
+    path: String,
+    max_iterations: u32,
+    target_expl_pot_frac: f32,
+    turns: Vec<BundleTurnManifestEntry>,
+    seconds: f64,
+    bytes: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BundleTurnManifestEntry {
+    card_id: u8,
+    expl_pot_frac: f32,
+}
+
+fn bundle_manifest_key(flop: &str, path: &str) -> String {
+    format!("{flop}/{path}")
+}
+
+fn load_bundle_manifest(path: &Path) -> BTreeMap<String, BundleManifestEntry> {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return BTreeMap::new();
+    };
+    let Ok(entries) = serde_json::from_str::<Vec<BundleManifestEntry>>(&text) else {
+        return BTreeMap::new();
+    };
+    entries
+        .into_iter()
+        .map(|entry| (bundle_manifest_key(&entry.flop, &entry.path), entry))
+        .collect()
+}
+
+fn save_bundle_manifest(path: &Path, entries: &BTreeMap<String, BundleManifestEntry>) {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        std::fs::create_dir_all(parent)
+            .unwrap_or_else(|e| panic!("failed to create {parent:?}: {e}"));
+    }
+    let list: Vec<&BundleManifestEntry> = entries.values().collect();
+    let json = serde_json::to_string_pretty(&list).expect("manifest entries must serialize");
+    std::fs::write(path, json).unwrap_or_else(|e| panic!("failed to write manifest {path:?}: {e}"));
+}
+
 fn manifest_path(scenario_out_dir: &Path) -> PathBuf {
     scenario_out_dir.join("manifest.json")
 }
@@ -77,6 +129,7 @@ struct Args {
     flop_path: Option<String>,
     flop_solution: Option<PathBuf>,
     bundle_out: Option<PathBuf>,
+    bundle_manifest: Option<PathBuf>,
     max_iterations: u32,
     target_exploitability_pot_frac: f32,
     resume: bool,
@@ -92,6 +145,7 @@ fn parse_args() -> Result<Args, String> {
     let mut flop_path = None;
     let mut flop_solution = None;
     let mut bundle_out = None;
+    let mut bundle_manifest = None;
     let mut max_iterations = 300u32;
     let mut target_exploitability_pot_frac = 0.003f32;
     let mut resume = false;
@@ -120,6 +174,11 @@ fn parse_args() -> Result<Args, String> {
             "--bundle-out" => {
                 bundle_out = Some(PathBuf::from(
                     it.next().ok_or("--bundle-out requires a value")?,
+                ))
+            }
+            "--bundle-manifest" => {
+                bundle_manifest = Some(PathBuf::from(
+                    it.next().ok_or("--bundle-manifest requires a value")?,
                 ))
             }
             "--max-iter" => {
@@ -159,6 +218,12 @@ fn parse_args() -> Result<Args, String> {
     if bundle_out.is_some() && (flop.is_none() || flop_path.is_none()) {
         return Err("--bundle-out requires both --flop and --flop-path".to_string());
     }
+    if bundle_manifest.is_some() && bundle_out.is_none() {
+        return Err("--bundle-manifest requires --bundle-out".to_string());
+    }
+    if bundle_out.is_some() && resume && bundle_manifest.is_none() {
+        return Err("bundle --resume requires --bundle-manifest".to_string());
+    }
     if flop_path.is_some() && turn_subgame.is_none() && bundle_out.is_none() {
         return Err("--flop-path requires --turn-subgame or --bundle-out".to_string());
     }
@@ -179,6 +244,7 @@ fn parse_args() -> Result<Args, String> {
         flop_path,
         flop_solution,
         bundle_out,
+        bundle_manifest,
         max_iterations,
         target_exploitability_pot_frac,
         resume,
@@ -288,6 +354,28 @@ fn main() {
     if let Some(bundle_out) = &args.bundle_out {
         let flop_str = args.flop.as_ref().expect("checked in parse_args");
         let action_path = args.flop_path.as_ref().expect("checked in parse_args");
+        let manifest_key = bundle_manifest_key(flop_str, action_path);
+        let mut bundle_manifest = args
+            .bundle_manifest
+            .as_ref()
+            .map(|path| load_bundle_manifest(path));
+        if args.resume {
+            let entry = bundle_manifest
+                .as_ref()
+                .and_then(|entries| entries.get(&manifest_key));
+            let matching_generation = entry.is_some_and(|entry| {
+                entry.max_iterations == args.max_iterations
+                    && entry.target_expl_pot_frac == args.target_exploitability_pot_frac
+                    && entry.turns.len() == 49
+            });
+            if matching_generation && bundle_out.is_file() {
+                println!(
+                    "skip turn bundle (manifest generation settings verified): scenario={} flop={} path={}",
+                    scenario.scenario_id, flop_str, action_path
+                );
+                return;
+            }
+        }
         let solution_path = match &args.flop_solution {
             Some(path) => path.clone(),
             None => {
@@ -304,6 +392,7 @@ fn main() {
         });
         let started = std::time::Instant::now();
         let mut entries = Vec::with_capacity(turn_cards.len());
+        let mut turn_manifest = Vec::with_capacity(turn_cards.len());
         for (index, &turn_card_id) in turn_cards.iter().enumerate() {
             let turn_str = card_to_string(turn_card_id).expect("legal card_id must format");
             let result = solve_turn_subgame_from_flop_solution(
@@ -324,6 +413,14 @@ fn main() {
             entries.push(TurnBundleSolution {
                 turn_card_id,
                 solution: result.solution,
+            });
+            turn_manifest.push(BundleTurnManifestEntry {
+                card_id: turn_card_id,
+                expl_pot_frac: entries
+                    .last()
+                    .expect("just pushed")
+                    .solution
+                    .exploitability_pot_frac,
             });
             println!(
                 "[{}/{}] turn={} elapsed={:.1}s",
@@ -352,6 +449,23 @@ fn main() {
         }
         std::fs::write(bundle_out, &bytes)
             .unwrap_or_else(|e| panic!("failed to write {bundle_out:?}: {e}"));
+        if let (Some(manifest_path), Some(manifest)) =
+            (args.bundle_manifest.as_ref(), bundle_manifest.as_mut())
+        {
+            manifest.insert(
+                manifest_key,
+                BundleManifestEntry {
+                    flop: flop_str.clone(),
+                    path: action_path.clone(),
+                    max_iterations: args.max_iterations,
+                    target_expl_pot_frac: args.target_exploitability_pot_frac,
+                    turns: turn_manifest,
+                    seconds: started.elapsed().as_secs_f64(),
+                    bytes: bytes.len(),
+                },
+            );
+            save_bundle_manifest(manifest_path, manifest);
+        }
         println!(
             "turn bundle complete: scenario={} flop={} path={} turns={} bytes={} seconds={:.1}",
             scenario.scenario_id,

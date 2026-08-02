@@ -1,0 +1,131 @@
+name: GTO Turn Bundle Generation
+
+# P15 S3: srp_btn_vs_bbの95フロップ×上位4経路を20シャードで生成する。
+# 手動起動専用。生成済み判定は.binの存在ではなく、各ターンの収束値を持つmanifestを使う。
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  SCENARIO_ID: srp_btn_vs_bb
+  HF_REPO_ID: Kota903/poker-trainer-gto-turn
+
+jobs:
+  solve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            tools/solver/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('tools/solver/Cargo.lock') }}
+      - name: Build precompute (release)
+        working-directory: tools/solver
+        run: cargo build --release -p precompute
+      - name: Restore completed bundles from Hugging Face
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          ROOT="turn-bundles/$SCENARIO_ID"
+          MANIFEST="$ROOT/_manifests/20-$SHARD.json"
+          mkdir -p "$(dirname "$MANIFEST")"
+          curl -fsSL --retry 3 \
+            "https://huggingface.co/datasets/$HF_REPO_ID/resolve/main/$SCENARIO_ID/_manifests/20-$SHARD.json" \
+            -o "$MANIFEST" || rm -f "$MANIFEST"
+
+          node - "$SHARD" <<'NODE' > /tmp/flops.txt
+          const fs = require('fs')
+          const shard = Number(process.argv[2])
+          const scenario = JSON.parse(fs.readFileSync('tools/solver/scenarios/srp_btn_vs_bb.json', 'utf8'))
+          if (scenario.scenarioId !== 'srp_btn_vs_bb' || scenario.flops.length !== 95) {
+            throw new Error('S3 scope changed: expected srp_btn_vs_bb with exactly 95 flops')
+          }
+          process.stdout.write(scenario.flops.filter((_, index) => index % 20 === shard).join('\n') + '\n')
+          NODE
+
+          while IFS= read -r flop; do
+            [ -z "$flop" ] && continue
+            mkdir -p "$ROOT/$flop"
+            for path in check-check check-bet33-call bet75-call bet33-call; do
+              curl -fsSL --retry 3 \
+                "https://huggingface.co/datasets/$HF_REPO_ID/resolve/main/$SCENARIO_ID/$flop/$path.bin" \
+                -o "$ROOT/$flop/$path.bin" || rm -f "$ROOT/$flop/$path.bin"
+            done
+          done < /tmp/flops.txt
+      - name: Solve assigned turn bundles
+        working-directory: tools/solver
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          ROOT="../../turn-bundles/$SCENARIO_ID"
+          MANIFEST="$ROOT/_manifests/20-$SHARD.json"
+          FAILED=0
+          while IFS= read -r flop; do
+            [ -z "$flop" ] && continue
+            for path in check-check check-bet33-call bet75-call bet33-call; do
+              echo "=== solving $SCENARIO_ID/$flop/$path ==="
+              if ! /usr/bin/time -v ./target/release/precompute \
+                --scenario "scenarios/$SCENARIO_ID.json" \
+                --flop "$flop" --flop-path "$path" \
+                --bundle-out "$ROOT/$flop/$path.bin" \
+                --bundle-manifest "$MANIFEST" \
+                --max-iter 1200 --target-expl 0.003 --resume --progress \
+                2>&1 | tee -a "turn-bundles-$SHARD.log"; then
+                FAILED=1
+              fi
+            done
+          done < /tmp/flops.txt
+          if [ "$FAILED" = "1" ]; then
+            echo "one or more bundles failed; successful bundles remain resumable"
+            exit 1
+          fi
+      - name: Upload shard artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: turn-bundles-${{ matrix.shard }}
+          path: |
+            turn-bundles/
+            tools/solver/turn-bundles-${{ matrix.shard }}.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  upload:
+    needs: solve
+    if: always() && needs.solve.result != 'skipped'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: turn-bundles-*
+          path: collected
+          merge-multiple: true
+      - name: Install the hf CLI
+        run: |
+          curl -LsSf https://hf.co/cli/install.sh | bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Upload bundles to Hugging Face
+        env:
+          HF_OIDC_RESOURCE: datasets/Kota903/poker-trainer-gto-turn
+        run: |
+          hf upload Kota903/poker-trainer-gto-turn collected/turn-bundles . \
+            --repo-type dataset \
+            --commit-message "Upload GTO turn bundles from ${GITHUB_SHA::7}"
+      - name: Propagate solver failure after preserving completed work
+        if: needs.solve.result != 'success'
+        run: exit 1

@@ -89,9 +89,27 @@ cargo build --release -p precompute
   --scenario scenarios/srp_co_vs_bb.json \
   --out ../../public/gto/solutions \
   --resume --max-iter 500 --target-expl 0.005
+
+# 1フロップ・1経路の49ターンをSection 7形式のバンドルへ生成
+./target/release/precompute \
+  --scenario scenarios/srp_btn_vs_bb.json \
+  --flop AsQsJs --flop-path check-check \
+  --bundle-out ../../turn-bundles/srp_btn_vs_bb/AsQsJs/check-check.bin \
+  --bundle-manifest ../../turn-bundles/srp_btn_vs_bb/_manifests/local.json \
+  --resume --max-iter 1200 --target-expl 0.003
 ```
+
+`--max-iter 1200` は実測に基づく値(2026-08-02)。300では目標0.3% potへ到達せず
+0.33〜0.81%で反復上限に張り付くが、1200では代表10ターンすべてが0.285〜0.300%で
+**早期終了**する。1バンドルあたり116秒→149秒(+28%)で精度目標を満たせるため、
+反復数を上げる側が明確に有利。上限をさらに上げても早期終了するため所要時間は増えない。
 
 大規模なバッチ生成(全17マッチアップ×95フロップ)は、手元PCを長時間占有しないよう
 GitHub Actions(`.github/workflows/gto-batch.yml`、P8-4)経由での実行を推奨する。
 Actionsタブから`GTO Solver Batch Generation`をworkflow_dispatchで起動し、
 `scenario`(シナリオID)を指定すること。
+
+ターンバンドルは`GTO Turn Bundle Generation`(`.github/workflows/gto-turn-bundles.yml`)
+を手動起動する。`srp_btn_vs_bb`の95フロップ×4経路を20シャードで生成し、収束値を
+manifestへ記録して再実行時に継続する。完了分は集約ジョブからTrusted Publishers(OIDC)で
+Hugging Face Dataset `Kota903/poker-trainer-gto-turn`へアップロードされ、長期トークンは使わない。
