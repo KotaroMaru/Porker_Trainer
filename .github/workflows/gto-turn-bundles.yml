@@ -133,8 +133,18 @@ jobs:
           merge-multiple: true
       - name: Install the hf CLI
         run: |
-          curl -LsSf https://hf.co/cli/install.sh | bash
+          # pipefailが無いと、curlが失敗してもパイプ末尾のbashが空入力で正常終了し、
+          # 「何もインストールされていないのにステップは成功」になる(Run #2で実際に発生し、
+          # 次のステップが hf: command not found で落ちた)。
+          set -euo pipefail
+          curl -LsSf https://hf.co/cli/install.sh | bash || {
+            echo "install.sh failed; falling back to pip"
+            python3 -m pip install --upgrade "huggingface_hub>=1.19.0"
+          }
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.local/bin:$PATH"
+          # 導入できたことをこのステップ内で確認し、失敗を後段へ持ち越さない。
+          hf version || hf --version
       - name: Upload bundles to Hugging Face
         env:
           HF_OIDC_RESOURCE: datasets/Kota903/poker-trainer-gto-turn
