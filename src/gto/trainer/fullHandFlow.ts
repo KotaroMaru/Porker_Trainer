@@ -208,6 +208,22 @@ export function filterAndRenormalize(combos: readonly Combo[], weights: readonly
   return { combos: outCombos, weights: outWeights.map((w) => w / total) }
 }
 
+/**
+ * ターンバンドルとの照合用に、デッドカードだけを除いたコンボ表を作る。
+ *
+ * filterAndRenormalize()は到達確率0のコンボも落とすが、Rust側のバンドルは
+ * **落とさずに全コンボを保持する**(経路が違ってもコンボ数が変わらないことを実測で確認)。
+ * 両者を突き合わせると件数がずれ、バンドルが常に不一致と判定されて
+ * ライブソルブへ黙って退避してしまう(実測: AsJs6s/check-checkでIP側3コンボがcheck頻度0)。
+ *
+ * そこで照合にはこちらの「デッドカードのみ除去」版を使う。重み0のコンボは
+ * 戦略上どのノードにも寄与しないため、含めても数値結果は変わらない。
+ * ライブソルブ側の入力は従来どおりfilterAndRenormalize()の結果を使い、挙動を変えない。
+ */
+export function excludeDeadCardOnly(combos: readonly Combo[], deadCardKey: string): Combo[] {
+  return combos.filter((c) => cardKey(c[0]) !== deadCardKey && cardKey(c[1]) !== deadCardKey)
+}
+
 function dealCardExcluding(usedCards: readonly Card[], rng: () => number): Card {
   const usedKeys = new Set(usedCards.map(cardKey))
   const remaining = createDeck().filter((c) => !usedKeys.has(cardKey(c)))
@@ -811,12 +827,16 @@ export class FullHandController {
             turnCard: newCard,
           })
         : null
-    // 到達レンジの重みはこの順序に対応する。生成物との順序不一致時に別コンボへ
-    // 誤適用すると数値的に破綻するため、その場合も安全にライブソルブへ退避する。
+    // 生成物との順序不一致時に別コンボへ誤適用すると数値的に破綻するため、照合に失敗したら
+    // 安全にライブソルブへ退避する。ただし比較対象はfilteredOop/Ipではなく
+    // excludeDeadCardOnly()の結果を使う。Rust側は到達確率0のコンボも保持するため、
+    // 0を落とすfilteredOop/Ipと突き合わせると常に不一致になりバンドルが使われない。
+    const bundleOopCombos = excludeDeadCardOnly(this.provider.oopCombos, cardK)
+    const bundleIpCombos = excludeDeadCardOnly(this.provider.ipCombos, cardK)
     const bundledTurnSolution =
       loadedTurnSolution &&
-      sameComboOrder(loadedTurnSolution.oopCombos, filteredOop.combos) &&
-      sameComboOrder(loadedTurnSolution.ipCombos, filteredIp.combos)
+      sameComboOrder(loadedTurnSolution.oopCombos, bundleOopCombos) &&
+      sameComboOrder(loadedTurnSolution.ipCombos, bundleIpCombos)
         ? loadedTurnSolution
         : null
 
