@@ -518,6 +518,16 @@ export class FullHandController {
     if (this.phase !== 'userTurn') return
     if (this.curNode.kind !== 'decision') return
     this.applyAction(this.curNode, label, this.userSeat, true)
+    // 押した直後に必ず1回描画する。applyActionはポット・履歴・盤面上のアクション表示を
+    // 更新するがemitしないため、以前はadvance()が最初のemitへ到達するまで画面が
+    // 押す前のまま(ボタンも出たまま)だった。advance()はストリート遷移やバンドル取得を
+    // 挟むことがあり、その間「ボタンが反応していない」ように見えていた。
+    //
+    // phaseをuserTurnのままemitすると、curNodeが相手の決断ノードへ進んでいるため
+    // 相手の選択肢がボタンとして出てしまう。botDecidingにしてボタンを消す。
+    // 直後にadvance()が実際のphaseへ上書きする(相手の手番/自分の手番/終了)。
+    this.phase = 'botDeciding'
+    this.emit()
     void this.advance()
   }
 

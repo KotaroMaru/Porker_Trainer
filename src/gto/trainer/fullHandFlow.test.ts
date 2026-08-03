@@ -27,21 +27,22 @@ function fixedRng(sequence: number[]): () => number {
 
 /**
  * onUpdateの通知を蓄積し、userTurn/over(=ユーザー入力を待つ一時停止点)まで待てるようにする。
- * 「直前に消費済みの一時停止状態」を再度返さないよう、pendingフラグで未消費の新規停止のみを
- * 有効とする(chooseAction直後、advance()が最初のawaitに到達するまで何もemitしない経路
- * (例: fold直後のfinalizeFold)では、waitForPause呼び出し時点でまだ古いuserTurnスナップ
- * ショットしかlatestに無い。フラグ無しだとそれを新しい停止と誤認して即座に返してしまう)。
+ *
+ * 「最新スナップショット」ではなく「未消費の一時停止スナップショット」を保持して返す。
+ * chooseActionの直後にはbotDeciding(一時停止ではない)が挟まるため、latestを返すと
+ * 停止点ではないスナップショットを掴んでしまう。同じ停止を二度返さないよう、
+ * 返したらnullへ戻す。
  */
 function createWaiter() {
   let latest: FullHandSnapshot | null = null
-  let pending = false
+  let pendingPause: FullHandSnapshot | null = null
   let waitingResolve: (() => void) | null = null
   const updates: FullHandSnapshot[] = []
   const onUpdate = (snap: FullHandSnapshot) => {
     latest = snap
     updates.push(snap)
     if (snap.phase === 'userTurn' || snap.phase === 'over') {
-      pending = true
+      pendingPause = snap
       if (waitingResolve) {
         const r = waitingResolve
         waitingResolve = null
@@ -50,15 +51,14 @@ function createWaiter() {
     }
   }
   async function waitForPause(): Promise<FullHandSnapshot> {
-    if (pending) {
-      pending = false
-      return latest!
+    if (!pendingPause) {
+      await new Promise<void>((resolve) => {
+        waitingResolve = resolve
+      })
     }
-    await new Promise<void>((resolve) => {
-      waitingResolve = resolve
-    })
-    pending = false
-    return latest!
+    const paused = pendingPause!
+    pendingPause = null
+    return paused
   }
   return { onUpdate, waitForPause, updates, get latest() { return latest } }
 }
