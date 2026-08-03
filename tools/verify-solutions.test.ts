@@ -3,10 +3,24 @@ import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { decodeSolutionFile } from '../src/gto/loader/binaryFormat'
+import { getScenario, isOopPosition } from '../src/gto/data/scenarios'
+import { expandWeightedRange } from '../src/gto/trainer/weightedRange'
+import { comboRustKey } from '../src/gto/trainer/comboIndex'
+import { expectedBytes, effectiveOpponentReach } from './solutionChecks'
 
-// P3パイロットバッチの検証(スポットチェック+サイズ確認)。
-// public/gto/solutions/{scenarioId}/*.bin を全件、TS側の本物のデコーダで読み、
-// 構造・整合性・統計を検証する(=Rustライタ↔TSリーダの実データ統合テストを兼ねる)。
+// P3パイロットバッチの検証。public/gto/solutions/{scenarioId}/*.bin を全件、
+// TS側の本物のデコーダで読み、構造・整合性・統計を検証する
+// (=Rustライタ↔TSリーダの実データ統合テストを兼ねる)。
+//
+// 2026-08-03: 「1ファイル20,000バイト以上」という絶対下限は、レンジが狭い3betポット
+// (実測9,949〜22,418バイト)では成立しないため撤去した。シナリオ種別ごとに閾値を
+// 分ける案もあるが、代理指標のまま定数表を増やすだけなので採らず、下限が担っていた
+// 「小さすぎる=生成失敗」の検出目的を以下の2つの直接的な検査へ置き換えている:
+//   - expectedBytes(): デコード結果から積み上げたあるべきバイト数と厳密一致するか
+//     (切り詰め・書きかけ・余分な末尾バイトの検出)
+//   - コンボ表がsrc/gto/data/{scenarios,ranges}.tsの宣言レンジと集合として一致するか
+//     (レンジの切り詰め・取り違えの検出。サイズを介さず中身そのものを見る)
+// 検査ロジックの単体テストは tools/solutionChecks.test.ts(データ非依存)。
 //
 // 実行: npx vitest run tools/verify-solutions.test.ts
 // 解ファイルがまだ存在しない環境(CI等)では自動スキップする。
@@ -47,6 +61,18 @@ describe.skipIf(!hasSolutions)('事前計算解(.bin)の整合性検証', () => 
       let totalBytes = 0
       const sizes: number[] = []
       const problems: string[] = []
+      // 到達不能ノードの無意味EV(FORMAT.md 4.5規約4)の件数。失敗ではないが可視化する。
+      let unreachableEvs = 0
+      // 全ファイルでノード集合(=アクション木)が同一であることの確認用。
+      const nodeIdSets = new Set<string>()
+
+      // コンボ表の期待値の正典: src/gto/data/{scenarios,ranges}.ts。
+      // ここが一致していれば「レンジが切り詰められた/取り違えた状態で生成された」
+      // という生成失敗を、ファイルサイズという代理指標を介さずに直接検出できる。
+      const scenario = getScenario(scenarioId)
+      const raiserIsOop = isOopPosition(scenario.raiser.position, scenario.defender.position)
+      const oopRangeId = raiserIsOop ? scenario.raiser.rangeId : scenario.defender.rangeId
+      const ipRangeId = raiserIsOop ? scenario.defender.rangeId : scenario.raiser.rangeId
 
       for (const file of files) {
         const bytes = readFileSync(join(dir, file))
@@ -79,6 +105,36 @@ describe.skipIf(!hasSolutions)('事前計算解(.bin)の整合性検証', () => 
             problems.push(`${file}: empty combo table oop=${sol.oopCombos.length} ip=${sol.ipCombos.length}`)
           }
 
+          nodeIdSets.add([...sol.nodes.keys()].sort().join(','))
+
+          // ファイルサイズの妥当性: 絶対バイト数の下限ではなく、デコード結果から
+          // 積み上げた「あるべきバイト数」との厳密一致で検証する。下限値はレンジ幅
+          // (3betポットはSRPの1/5程度のコンボ数)に依存してしまい、シナリオ横断の
+          // 単一閾値では「小さすぎる=生成失敗」を正しく表現できないため。
+          if (bytes.length !== expectedBytes(sol)) {
+            problems.push(`${file}: byte size ${bytes.length} != structural expectation ${expectedBytes(sol)}`)
+          }
+
+          // コンボ表 = 宣言レンジ(freq>0)からボードとブロックするものを除いた集合。
+          // レンジの切り詰め・取り違えによる生成失敗をここで検出する。
+          for (const [side, rangeId, combos] of [
+            ['oop', oopRangeId, sol.oopCombos],
+            ['ip', ipRangeId, sol.ipCombos],
+          ] as const) {
+            const expected = new Set(expandWeightedRange(rangeId, sol.flop).combos.map(comboRustKey))
+            const actual = new Set(combos.map(comboRustKey))
+            const missing = [...expected].filter((k) => !actual.has(k))
+            const extra = [...actual].filter((k) => !expected.has(k))
+            if (missing.length > 0 || extra.length > 0) {
+              problems.push(
+                `${file}: ${side} combo table mismatch vs range "${rangeId}" ` +
+                  `expected=${expected.size} actual=${actual.size} ` +
+                  `missing=${missing.length}[${missing.slice(0, 4).join(',')}] ` +
+                  `extra=${extra.length}[${extra.slice(0, 4).join(',')}]`,
+              )
+            }
+          }
+
           // 戦略頻度: 手ごとに合計≈1(u8量子化誤差許容)。レンジ重み0や完全ブロックの
           // コンボは全アクション0でありうるため合計≈0も許容する。
           //
@@ -107,7 +163,18 @@ describe.skipIf(!hasSolutions)('事前計算解(.bin)の整合性検証', () => 
             }
             for (let i = 0; i < node.evsBb.length; i++) {
               const ev = node.evsBb[i]
-              if (!Number.isFinite(ev) || Math.abs(ev) > evBound) badEvs++
+              if (Number.isFinite(ev) && Math.abs(ev) <= evBound) continue
+              // FORMAT.md 4.5規約4: 自分の手が相手の継続レンジ全体をブロックしていて
+              // 相手の到達確率がちょうど0のノードのEVは未定義(0/0)。
+              // expected_values_detailの巨大な正規化係数がi16圧縮の量子化残差を増幅した
+              // 値であり、データ生成の失敗ではない(再生成しても同じ値が再現する)。
+              // 閾値を緩めるのではなく「到達不能である」ことを積極的に証明して除外し、
+              // 相手の到達確率が正なのに範囲外のものは従来どおり失敗として扱う。
+              if (effectiveOpponentReach(sol, nodeId, node.player, i % handCount) === 0) {
+                unreachableEvs++
+                continue
+              }
+              badEvs++
             }
           }
           if (badFreqRows > 0) {
@@ -124,14 +191,14 @@ describe.skipIf(!hasSolutions)('事前計算解(.bin)の整合性検証', () => 
       console.log(
         `${scenarioId}: files=${files.length} total=${(totalBytes / 1e6).toFixed(2)}MB ` +
           `avg=${(totalBytes / files.length / 1024).toFixed(1)}KB ` +
-          `min=${(sizes[0] / 1024).toFixed(1)}KB max=${(sizes[sizes.length - 1] / 1024).toFixed(1)}KB`,
+          `min=${(sizes[0] / 1024).toFixed(1)}KB max=${(sizes[sizes.length - 1] / 1024).toFixed(1)}KB ` +
+          `unreachableEvs=${unreachableEvs}`,
       )
 
       expect(problems, problems.join('\n')).toEqual([])
-      // ファイルサイズの妥当性: プラン想定は1ファイル≈74KB前後(実測80-93KB)。
-      // 異常に小さい/大きいファイル(書きかけ・破損)を検出する。
-      expect(sizes[0]).toBeGreaterThan(20_000)
-      expect(sizes[sizes.length - 1]).toBeLessThan(500_000)
+      // アクション木は(シナリオ, フロップ)に依存しないので、全ファイルでノード集合が
+      // 一致するはず。部分的な木で生成されたファイルをここで検出する。
+      expect([...nodeIdSets], `node id sets differ across files of ${scenarioId}`).toHaveLength(1)
     })
   }
 })
