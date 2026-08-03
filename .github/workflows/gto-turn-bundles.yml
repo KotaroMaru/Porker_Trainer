@@ -13,24 +13,29 @@ name: GTO Turn Bundle Generation
 # 余裕を持たせたい場合は paths 入力で経路を分割して複数回に分けて実行する
 # (manifestとHF上の既存バンドルからresumeするため、分割しても再計算は起きない)。
 on:
+  # フロップ生成CIの成功後に自動で走らせる。人手での起動を待たずに、
+  # 「フロップ解はあるがターンバンドルが無い」中途半端な期間を最短にするため。
+  workflow_run:
+    workflows: ['GTO Solver Batch Generation']
+    types: [completed]
   workflow_dispatch:
-    inputs:
-      paths:
-        description: '生成するフロップ経路(スペース区切り)。既定は全9経路。'
-        required: false
-        default: 'check-check check-bet33-call check-bet33-raise55-call check-bet75-call check-bet75-raise55-call bet33-call bet33-raise55-call bet75-call bet75-raise55-call'
 
 permissions:
   id-token: write
-  contents: read
+  # turnBundleFlops.json の同期コミットに必要。
+  contents: write
 
 env:
   SCENARIO_ID: srp_btn_vs_bb
   HF_REPO_ID: Kota903/poker-trainer-gto-turn
-  TURN_PATHS: ${{ inputs.paths }}
+  # 経路一覧の正典。src/gto/tree/turnPaths.test.ts がフロップ木・アプリ定数との
+  # 三者一致を検査する。workflow_run 起動では inputs が空になるため env に置く。
+  TURN_PATHS_ALL: 'check-check check-bet33-call check-bet33-raise55-call check-bet75-call check-bet75-raise55-call bet33-call bet33-raise55-call bet75-call bet75-raise55-call'
 
 jobs:
   solve:
+    # workflow_run は成功・失敗を問わず発火するので、成功時だけ先へ進める。
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 360
     strategy:
@@ -38,6 +43,10 @@ jobs:
       max-parallel: 20
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        # 経路を第2次元にして1ジョブの担当量を1/3へ減らす。300フロップ×9経路を
+        # 20シャードだけで割ると1ジョブ約9.8時間となり6時間上限を超えるため。
+        # (フロップ×経路の担当は shard と pathGroup の組で一意に決まる)
+        pathGroup: [0, 1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -54,21 +63,27 @@ jobs:
       - name: Restore completed bundles from Hugging Face
         env:
           SHARD: ${{ matrix.shard }}
+          PATH_GROUP: ${{ matrix.pathGroup }}
         run: |
           set -euo pipefail
+          # 担当経路: 全経路を3つおきに割り当てる(pathGroup 0/1/2)。
+          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR%3==g{printf "%s ", $0}')
+          echo "pathGroup=$PATH_GROUP paths=$TURN_PATHS"
           ROOT="turn-bundles/$SCENARIO_ID"
-          MANIFEST="$ROOT/_manifests/20-$SHARD.json"
+          MANIFEST="$ROOT/_manifests/20-$SHARD-g$PATH_GROUP.json"
           mkdir -p "$(dirname "$MANIFEST")"
           curl -fsSL --retry 3 \
-            "https://huggingface.co/datasets/$HF_REPO_ID/resolve/main/$SCENARIO_ID/_manifests/20-$SHARD.json" \
+            "https://huggingface.co/datasets/$HF_REPO_ID/resolve/main/$SCENARIO_ID/_manifests/20-$SHARD-g$PATH_GROUP.json" \
             -o "$MANIFEST" || rm -f "$MANIFEST"
 
           node - "$SHARD" <<'NODE' > /tmp/flops.txt
           const fs = require('fs')
           const shard = Number(process.argv[2])
           const scenario = JSON.parse(fs.readFileSync('tools/solver/scenarios/srp_btn_vs_bb.json', 'utf8'))
-          if (scenario.scenarioId !== 'srp_btn_vs_bb' || scenario.flops.length !== 95) {
-            throw new Error('S3 scope changed: expected srp_btn_vs_bb with exactly 95 flops')
+          // 対応フロップ数は段階的に増える(P15段階B-1で95→300)。件数の固定はやめ、
+          // シナリオの取り違えと空リストだけを弾く。
+          if (scenario.scenarioId !== 'srp_btn_vs_bb' || scenario.flops.length === 0) {
+            throw new Error('S3 scope changed: expected a non-empty srp_btn_vs_bb flop list')
           }
           process.stdout.write(scenario.flops.filter((_, index) => index % 20 === shard).join('\n') + '\n')
           NODE
@@ -86,10 +101,12 @@ jobs:
         working-directory: tools/solver
         env:
           SHARD: ${{ matrix.shard }}
+          PATH_GROUP: ${{ matrix.pathGroup }}
         run: |
           set -euo pipefail
+          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR%3==g{printf "%s ", $0}')
           ROOT="../../turn-bundles/$SCENARIO_ID"
-          MANIFEST="$ROOT/_manifests/20-$SHARD.json"
+          MANIFEST="$ROOT/_manifests/20-$SHARD-g$PATH_GROUP.json"
           FAILED=0
           while IFS= read -r flop; do
             [ -z "$flop" ] && continue
@@ -101,7 +118,7 @@ jobs:
                 --bundle-out "$ROOT/$flop/$path.bin" \
                 --bundle-manifest "$MANIFEST" \
                 --max-iter 1200 --target-expl 0.003 --resume --progress \
-                2>&1 | tee -a "turn-bundles-$SHARD.log"; then
+                2>&1 | tee -a "turn-bundles-$SHARD-g$PATH_GROUP.log"; then
                 FAILED=1
               fi
             done
@@ -114,10 +131,10 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: turn-bundles-${{ matrix.shard }}
+          name: turn-bundles-${{ matrix.shard }}-g${{ matrix.pathGroup }}
           path: |
             turn-bundles/
-            tools/solver/turn-bundles-${{ matrix.shard }}.log
+            tools/solver/turn-bundles-${{ matrix.shard }}-g${{ matrix.pathGroup }}.log
           retention-days: 7
           if-no-files-found: ignore
 
@@ -155,3 +172,33 @@ jobs:
       - name: Propagate solver failure after preserving completed work
         if: needs.solve.result != 'success'
         run: exit 1
+
+  # HFへの反映後、全経路そろったフロップの一覧を更新してコミットする。
+  # これが無いとアプリの出題対象が広がらず、人手の作業が残る。
+  sync-coverage:
+    needs: upload
+    if: needs.upload.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Sync fully bundled flop list
+        run: node tools/sync-turn-bundle-flops.mjs
+      - name: Commit and push if changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- src/gto/data/turnBundleFlops.json; then
+            echo "no coverage change"
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/gto/data/turnBundleFlops.json
+          git commit -m 'data(gto): ターンバンドル収録フロップを同期 [skip ci]'
+          # 生成CIが並行してpushしている場合に備えてリベースしてから送る。
+          git pull --rebase --autostash origin "${GITHUB_REF_NAME}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"

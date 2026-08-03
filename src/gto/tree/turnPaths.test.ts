@@ -44,8 +44,10 @@ function enumerateTurnPaths(): string[] {
 
 function workflowDefaultPaths(): string[] {
   const yaml = readFileSync(WORKFLOW_PATH, 'utf8')
-  const match = yaml.match(/^\s*default:\s*'([^']+)'\s*$/m)
-  if (!match) throw new Error('gto-turn-bundles.yml から paths 入力の default が読み取れない')
+  // 経路一覧の正典は env.TURN_PATHS_ALL。workflow_run 起動では inputs が空になるため
+  // workflow_dispatch の入力ではなく env に置いている。
+  const match = yaml.match(/^\s*TURN_PATHS_ALL:\s*'([^']+)'\s*$/m)
+  if (!match) throw new Error('gto-turn-bundles.yml から TURN_PATHS_ALL が読み取れない')
   return match[1].split(/\s+/).filter(Boolean)
 }
 
