@@ -14,9 +14,11 @@ import {
   __resetProviderFactoryForTests,
   selectScenarioPool,
   selectFlopPool,
+  selectFocusFlopPool,
   __resetAvailabilityInflightForTests,
 } from './store'
 import { activeScenarioIds } from './settings'
+import TURN_BUNDLE_FLOPS from './data/turnBundleFlops.json'
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
 import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeDataProvider'
@@ -958,6 +960,28 @@ describe('selectScenarioPool (P6 B9)', () => {
   it('出題可能なシナリオが1つも無ければFALLBACK_SCENARIO_ID(srp_btn_vs_bb)のみへフォールバックする', () => {
     const pool = selectScenarioPool(SCENARIOS, [], new Set())
     expect(pool.map((s) => s.id)).toEqual(['srp_btn_vs_bb'])
+  })
+})
+
+describe('selectFocusFlopPool (P15 特化モード)', () => {
+  const bundled = FLOPS.filter((f) => TURN_BUNDLE_FLOPS.srp_btn_vs_bb.includes(f.cards.join('')))
+
+  it('特化モード中は、ターンバンドルが全経路そろっているフロップだけになる', () => {
+    const pool = selectFocusFlopPool(FLOPS, 'srp_btn_vs_bb', 'srp_btn_vs_bb')
+    expect(pool.length).toBe(bundled.length)
+    expect(pool.length).toBeLessThan(FLOPS.length)
+    for (const f of pool) expect(TURN_BUNDLE_FLOPS.srp_btn_vs_bb).toContain(f.cards.join(''))
+  })
+
+  it('特化モードでないシナリオは絞らない', () => {
+    expect(selectFocusFlopPool(FLOPS, 'srp_co_vs_bb', 'srp_btn_vs_bb').length).toBe(FLOPS.length)
+    expect(selectFocusFlopPool(FLOPS, 'srp_btn_vs_bb', null).length).toBe(FLOPS.length)
+  })
+
+  it('絞り込み結果が空になる場合は絞らない(出題できなくなるより待ちが出る方がまし)', () => {
+    const noneBundled = FLOPS.filter((f) => !TURN_BUNDLE_FLOPS.srp_btn_vs_bb.includes(f.cards.join('')))
+    if (noneBundled.length === 0) return
+    expect(selectFocusFlopPool(noneBundled, 'srp_btn_vs_bb', 'srp_btn_vs_bb').length).toBe(noneBundled.length)
   })
 })
 

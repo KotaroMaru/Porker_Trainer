@@ -5,6 +5,7 @@ import type { Card } from '../../engine/types'
 import { cardKey } from '../../engine/deck'
 import type { DecodedSolution } from './binaryFormat'
 import { decodeBundleIndex, decodeBundleTurn } from './bundleFormat'
+import TURN_BUNDLE_FLOPS from '../data/turnBundleFlops.json'
 
 export const TURN_BUNDLE_BASE_URL =
   'https://huggingface.co/datasets/Kota903/poker-trainer-gto-turn/resolve/main'
@@ -46,6 +47,21 @@ export interface TurnBundleRequest {
 
 export function hasRecordedTurnBundle(scenarioId: string, pathId: string): boolean {
   return RECORDED_TURN_BUNDLES[scenarioId]?.includes(pathId) ?? false
+}
+
+/**
+ * ターンバンドルが全経路そろっているフロップID一覧(シナリオ別)。
+ *
+ * フロップ解(public/gto/solutions)とターンバンドル(HF)は別々のCIで生成されるため、
+ * 「フロップ解はあるがターンバンドルが無い」中途半端な状態が生じる。特化モードは
+ * 「待ち時間なし」が売りなので、その状態のフロップは出題対象から外す
+ * (外さないとターンで毎回ソルブが走り、特化モードの意味がなくなる)。
+ *
+ * tools/sync-turn-bundle-flops.mjs でHFの実際の収録状況から再生成する。
+ */
+export function fullyBundledFlopIds(scenarioId: string): readonly string[] | undefined {
+  const list = (TURN_BUNDLE_FLOPS as Record<string, unknown>)[scenarioId]
+  return Array.isArray(list) ? (list as string[]) : undefined
 }
 
 /** 特化モードの対象にできる(=ターンバンドルが収録済みの)シナリオID一覧。 */

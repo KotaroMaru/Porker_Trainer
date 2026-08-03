@@ -33,6 +33,7 @@ import { FullHandController, type FullHandSnapshot } from './trainer/fullHandFlo
 import { createWorkerProviderFactory } from './worker/workerProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
 import { activeScenarioIds, loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from './settings'
+import { fullyBundledFlopIds } from './loader/turnBundleSource'
 import { saveBookmark, loadBookmark, type SaveBookmarkResult } from './bookmarks/storage'
 import type { GradeResult } from './trainer/grading'
 import type { Scenario, FlopDef } from './types'
@@ -64,6 +65,24 @@ export function selectFlopPool(flops: readonly FlopDef[], availableFlopIds: read
   if (!availableFlopIds) return [...flops]
   const filtered = flops.filter((f) => availableFlopIds.includes(f.cards.join('')))
   return filtered.length > 0 ? filtered : [...flops]
+}
+
+/**
+ * 特化モード中は、ターンバンドルが全経路そろっているフロップだけへ絞る。
+ *
+ * フロップ解とターンバンドルは別々のCIで生成されるため、「フロップ解はあるが
+ * ターンバンドルが無い」中途半端な状態が生じる。そのフロップを出題すると
+ * ターンで毎回ソルブが走り、特化モードの利点(待ち時間なし)が失われる。
+ *
+ * バンドル側の一覧が未整備・空・絞り込み結果が空の場合は絞らない
+ * (出題できなくなるより、待ちが出てもプレイできる方がよい)。
+ */
+export function selectFocusFlopPool(pool: readonly FlopDef[], scenarioId: string, focusScenarioId: string | null): FlopDef[] {
+  if (focusScenarioId !== scenarioId) return [...pool]
+  const bundled = fullyBundledFlopIds(scenarioId)
+  if (!bundled || bundled.length === 0) return [...pool]
+  const filtered = pool.filter((f) => bundled.includes(f.cards.join('')))
+  return filtered.length > 0 ? filtered : [...pool]
 }
 
 /**
@@ -375,7 +394,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       const pool = selectScenarioPool(SCENARIOS, activeScenarioIds(settings), playable)
       const scenario = pickWeightedScenario(pool, seeds.scenarioRng)
       const { flop, solution: flopSolution } = await pickFlopWithSolution(
-        selectFlopPool(FLOPS, availability?.get(scenario.id)),
+        selectFocusFlopPool(selectFlopPool(FLOPS, availability?.get(scenario.id)), scenario.id, settings.focusScenarioId),
         seeds.flopRng,
         scenario.id,
       )
@@ -727,7 +746,7 @@ export const useGtoStore = create<GtoState>((set, get) => {
       const pool = selectScenarioPool(SCENARIOS, activeScenarioIds(settings), playable)
       const scenario = pickWeightedScenario(pool)
 
-      const flopPool = selectFlopPool(FLOPS, availability?.get(scenario.id))
+      const flopPool = selectFocusFlopPool(selectFlopPool(FLOPS, availability?.get(scenario.id)), scenario.id, settings.focusScenarioId)
       const { flop, solution: flopSolution } = await pickFlopWithSolution(flopPool, undefined, scenario.id)
       const userSeat: Seat = Math.random() < 0.5 ? 0 : 1
 
