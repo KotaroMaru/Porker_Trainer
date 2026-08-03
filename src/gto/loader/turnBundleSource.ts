@@ -48,6 +48,11 @@ export function hasRecordedTurnBundle(scenarioId: string, pathId: string): boole
   return RECORDED_TURN_BUNDLES[scenarioId]?.includes(pathId) ?? false
 }
 
+/** 特化モードの対象にできる(=ターンバンドルが収録済みの)シナリオID一覧。 */
+export function focusEligibleScenarioIds(): string[] {
+  return Object.keys(RECORDED_TURN_BUNDLES)
+}
+
 /**
  * 指定ターンの事前計算解を返す。取得・検証・デコードの失敗はすべてnullへ畳み、
  * 呼び出し側が従来のライブソルブへ必ず退避できるようにする。

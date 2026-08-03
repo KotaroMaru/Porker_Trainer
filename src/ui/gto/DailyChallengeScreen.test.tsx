@@ -22,6 +22,22 @@ const originalFetch = globalThis.fetch
 beforeAll(() => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
+    // manifest.jsonも配信する。FLOPSには解が未生成のフロップも含まれる(対応数を段階的に
+
+    // 増やしているため)ので、本番同様availabilityで生成済みだけに絞れないと、
+
+    // 未生成フロップを引いてスポットが作れない。
+
+    const manifestMatch = url.match(/\/gto\/solutions\/([^/]+)\/manifest\.json$/)
+
+    if (manifestMatch) {
+
+      const dir = join(process.cwd(), 'public/gto/solutions', manifestMatch[1])
+
+      return new Response(await readFile(join(dir, 'manifest.json')), { status: 200 })
+
+    }
+
     const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
     if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
     const [, scenarioId, flopId] = match
@@ -55,6 +71,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
   return {
     phase: 'userTurn',
     street: 'flop',
+    turnSolutionSource: null,
     board: board3,
     potBb: scenario.potBb,
     solveProgress: null,
@@ -97,7 +114,7 @@ function resetStore(overrides: Partial<ReturnType<typeof useGtoStore.getState>>)
     chosenLabel: null,
     errorMessage: null,
     sessionTally: initialTally(),
-    settings: { mode: 'single', enabledScenarioIds: [] },
+    settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null },
     fullHand: null,
     fullHandController: null,
     review: null,
@@ -144,7 +161,7 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
   it('通しモードでプレイ中はPokerTableView+進捗を表示し、userTurn中はアクションボタンが出る', () => {
     resetStore({
       status: 'userTurn',
-      settings: { mode: 'full', enabledScenarioIds: [] },
+      settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
       fullHand: baseFullHand({ phase: 'userTurn', actionsWithAmounts: [{ label: 'check', amountBb: 0 }, { label: 'bet33', amountBb: 1.8 }] }),
       dailyChallenge: baseDailyChallenge({ handIndex: 0, mode: 'full' }),
     })
@@ -161,7 +178,7 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
   it('通しモードでbotThinking中はアクションボタンを出さず考え中表示にする', () => {
     resetStore({
       status: 'botThinking',
-      settings: { mode: 'full', enabledScenarioIds: [] },
+      settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
       fullHand: baseFullHand({ phase: 'botDeciding', solveProgress: 0.42 }),
       dailyChallenge: baseDailyChallenge({ handIndex: 4, mode: 'full' }),
     })
@@ -176,7 +193,7 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
   it('通しモードで解析100%後の残処理中は「まとめています…」を表示する', () => {
     resetStore({
       status: 'botThinking',
-      settings: { mode: 'full', enabledScenarioIds: [] },
+      settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
       fullHand: baseFullHand({ phase: 'botDeciding', solveProgress: 1, solvePhase: 'finalizing' }),
       dailyChallenge: baseDailyChallenge({ handIndex: 4, mode: 'full' }),
     })
@@ -187,7 +204,7 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
   })
 
   it('reviewing中(最終問未満)はReviewScreen+「次のハンドへ」ボタンを表示し、クリックでdismissDailyReviewが呼ばれる', async () => {
-    resetStore({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [] } })
+    resetStore({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
     await useGtoStore.getState().startNewSpot()
     const spot = useGtoStore.getState().spot
     if (!spot) throw new Error('spot should be set')
@@ -210,7 +227,7 @@ describe('DailyChallengeScreen (P11 Phase C)', () => {
   })
 
   it('reviewing中(最終問)は「結果を見る」ボタンを表示し、クリックでphase:doneになる', async () => {
-    resetStore({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [] } })
+    resetStore({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
     await useGtoStore.getState().startNewSpot()
     const spot = useGtoStore.getState().spot
     if (!spot) throw new Error('spot should be set')

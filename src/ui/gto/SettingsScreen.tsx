@@ -76,6 +76,7 @@ export function SettingsScreen() {
       <div>
         <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>
           出題シナリオ{availability === null && '(解データを確認中...)'}
+          {settings.focusScenarioId && <span style={{ marginLeft: 8 }}>（特化モード中のため変更できません）</span>}
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {[...groups.entries()].map(([group, scenarios]) => (
@@ -86,6 +87,7 @@ export function SettingsScreen() {
                   const flopCount = availability?.get(s.id)?.length
                   const badge = availabilityBadge(flopCount)
                   const checked = settings.enabledScenarioIds.includes(s.id)
+                  const disabled = !badge.playable || settings.focusScenarioId !== null
                   return (
                     <label
                       key={s.id}
@@ -96,11 +98,11 @@ export function SettingsScreen() {
                         padding: '6px 10px',
                         borderRadius: 6,
                         background: 'var(--panel-bg)',
-                        opacity: badge.playable ? 1 : 0.5,
-                        cursor: badge.playable ? 'pointer' : 'not-allowed',
+                        opacity: disabled ? 0.5 : 1,
+                        cursor: disabled ? 'not-allowed' : 'pointer',
                       }}
                     >
-                      <input type="checkbox" checked={checked} disabled={!badge.playable} onChange={(e) => setScenarioEnabled(s.id, e.target.checked)} />
+                      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => setScenarioEnabled(s.id, e.target.checked)} />
                       <span style={{ flex: 1, fontSize: 13.5 }}>{s.label}</span>
                       <span
                         style={{

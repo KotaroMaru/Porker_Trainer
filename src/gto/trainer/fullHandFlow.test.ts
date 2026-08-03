@@ -147,6 +147,7 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     const turnSnap = await waiter.waitForPause()
 
     expect(turnSnap.street).toBe('turn')
+    expect(turnSnap.turnSolutionSource).toBe('precomputed')
     expect(loadSpy).toHaveBeenCalledWith(expect.objectContaining({
       scenarioId: 'srp_btn_vs_bb',
       flopId: 'AsQsJs',
@@ -212,6 +213,7 @@ describe('FullHandController (実.binフィクスチャ+in-processファクト�
     const turnSnap = await waiter.waitForPause()
 
     expect(turnSnap.street).toBe('turn')
+    expect(turnSnap.turnSolutionSource).toBe('live')
     expect(precomputedCalls).toBe(0)
     expect(liveCalls).toBe(1)
     expect(refineCalls).toBe(1)

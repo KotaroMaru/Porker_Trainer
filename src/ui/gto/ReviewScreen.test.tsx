@@ -18,6 +18,22 @@ const originalFetch = globalThis.fetch
 beforeAll(() => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
+    // manifest.jsonも配信する。FLOPSには解が未生成のフロップも含まれる(対応数を段階的に
+
+    // 増やしているため)ので、本番同様availabilityで生成済みだけに絞れないと、
+
+    // 未生成フロップを引いてスポットが作れない。
+
+    const manifestMatch = url.match(/\/gto\/solutions\/([^/]+)\/manifest\.json$/)
+
+    if (manifestMatch) {
+
+      const dir = join(process.cwd(), 'public/gto/solutions', manifestMatch[1])
+
+      return new Response(await readFile(join(dir, 'manifest.json')), { status: 200 })
+
+    }
+
     const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
     if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
     const [, scenarioId, flopId] = match
@@ -190,6 +206,15 @@ describe('ReviewScreen', () => {
     expect(useGtoStore.getState().review).toBeNull()
   })
 
+  it('レビューでは、その場で解析したターン決断にのみ「計算」バッジを出す', async () => {
+    await advanceToGraded()
+    const baseReview = useGtoStore.getState().review!
+    const liveTurn = { ...baseReview.decisions[0], street: 'turn' as const, turnSolutionSource: 'live' as const, nodeId: 'synthetic-live-turn' }
+    useGtoStore.setState({ review: { ...baseReview, decisions: [liveTurn] }, activeDecisionIdx: 0 })
+    render(<ReviewScreen />)
+    expect(screen.getByText('計算')).toBeInTheDocument()
+  })
+
   it('複数決断のレビュー(P6通しモード相当)では、ナビゲータチップに街ラベルが表示され、セクション3のボードは各決断時点のboardAtDecisionのみをカードで表示する(P7-3)', async () => {
     // FullHandController統合(B7)前でも、reviewBuilder.ts側の型(街ごとのReviewDecision)を
     // 直接使ってReviewScreen単体の複数決断描画を検証できる(合成2決断のReviewData)。
@@ -198,7 +223,7 @@ describe('ReviewScreen', () => {
     const extraCard: Card = { rank: 2, suit: 'c' }
     const finalBoard: Card[] = [...baseReview.board, extraCard]
     const flopDecision = { ...baseReview.decisions[0], street: 'flop' as const, boardAtDecision: baseReview.board }
-    const turnDecision = { ...baseReview.decisions[0], street: 'turn' as const, boardAtDecision: finalBoard, nodeId: 'synthetic-turn-decision' }
+    const turnDecision = { ...baseReview.decisions[0], street: 'turn' as const, turnSolutionSource: 'precomputed' as const, boardAtDecision: finalBoard, nodeId: 'synthetic-turn-decision' }
     const syntheticReview = { ...baseReview, board: finalBoard, decisions: [flopDecision, turnDecision] }
     useGtoStore.setState({ review: syntheticReview, reviewFeatures: [null, null], reviewFeaturesStatus: 'idle', activeDecisionIdx: 0 })
 
@@ -211,6 +236,7 @@ describe('ReviewScreen', () => {
     // activeDecisionIdx=0(flop決断): boardAtDecisionは3枚(review.boardは4枚だが使われない)。
     const boardContainer = screen.getByTestId('board-cards')
     expect(boardContainer.children.length).toBe(flopDecision.boardAtDecision.length)
+    expect(screen.queryByText('計算')).not.toBeInTheDocument()
 
     // ターン決断へ切り替えるとboardAtDecisionが4枚に増える。
     screen.getByText('次 ▶').click()
@@ -218,6 +244,8 @@ describe('ReviewScreen', () => {
       expect(useGtoStore.getState().activeDecisionIdx).toBe(1)
     })
     expect(screen.getByTestId('board-cards').children.length).toBe(turnDecision.boardAtDecision.length)
+    // 事前計算解が使えた決断ではバッジを出さない(出ないことが正常)。
+    expect(screen.queryByText('計算')).not.toBeInTheDocument()
     // 「決断時点のボード」という冗長な別行はP7-3で削除済み。
     expect(screen.queryByText(/決断時点のボード/)).not.toBeInTheDocument()
   })

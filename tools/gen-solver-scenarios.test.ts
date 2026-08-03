@@ -72,10 +72,15 @@ describe('gen-solver-scenarios.mjs', () => {
     }
   })
 
-  it('各シナリオが95個の代表フロップを持ち、各フロップが3枚のカード文字列(rank+suit)である', () => {
+  it('各シナリオが代表フロップを持ち、各フロップが3枚のカード文字列(rank+suit)である', () => {
+    // P15 段階B-1: 対応フロップ数はシナリオごとに段階的に増やす。srp_btn_vs_bbのみ300件へ
+    // 拡張済みで、他16シナリオは95件のまま(優先度が「1シナリオを深く」であるため)。
+    // 件数そのものは src/gto/data/flops.test.ts が flops.json と突き合わせて検査する。
     const flopPattern = /^([2-9TJQKA][cdhs]){3}$/
     for (const f of files) {
-      expect(f.flops.length).toBe(95)
+      expect(f.flops.length).toBeGreaterThanOrEqual(95)
+      // 同じフロップが重複して並んでいないこと(生成スクリプトの取りこぼし検出)。
+      expect(new Set(f.flops).size).toBe(f.flops.length)
       for (const flop of f.flops) {
         expect(flop).toMatch(flopPattern)
       }

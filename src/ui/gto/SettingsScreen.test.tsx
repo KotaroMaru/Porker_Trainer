@@ -61,11 +61,12 @@ describe('SettingsScreen', () => {
     expect(useGtoStore.getState().settings.mode).toBe('single')
   })
 
-  it('生成済み(95/95)シナリオのチェックボックスは有効で、未生成シナリオは無効(チェック不可)になる', async () => {
+  it('生成済み(95/300)シナリオのチェックボックスは有効で、未生成シナリオは無効(チェック不可)になる', async () => {
     render(<SettingsScreen />)
 
     await waitFor(() => {
-      expect(screen.getByText('95/95')).toBeInTheDocument()
+      // FLOPSは300件へ拡張済みだが解は95件。生成済み/対応予定 の比として表示される。
+      expect(screen.getByText('95/300 生成中')).toBeInTheDocument()
     })
     expect(screen.getAllByText('未生成').length).toBe(SCENARIOS.length - 1)
 
@@ -80,7 +81,8 @@ describe('SettingsScreen', () => {
     render(<SettingsScreen />)
 
     await waitFor(() => {
-      expect(screen.getByText('95/95')).toBeInTheDocument()
+      // FLOPSは300件へ拡張済みだが解は95件。生成済み/対応予定 の比として表示される。
+      expect(screen.getByText('95/300 生成中')).toBeInTheDocument()
     })
     expect(useGtoStore.getState().settings.enabledScenarioIds).toContain('srp_btn_vs_bb')
 
@@ -90,6 +92,18 @@ describe('SettingsScreen', () => {
     enabledCheckbox.click()
 
     expect(useGtoStore.getState().settings.enabledScenarioIds).not.toContain('srp_btn_vs_bb')
+  })
+
+  it('特化モード中は理由を表示し、生成済みを含む全シナリオの変更を無効化する', async () => {
+    useGtoStore.setState({ settings: { ...defaultGtoSettings(), mode: 'full', focusScenarioId: 'srp_btn_vs_bb' } })
+    render(<SettingsScreen />)
+
+    await waitFor(() => {
+      // FLOPSは300件へ拡張済みだが解は95件。生成済み/対応予定 の比として表示される。
+      expect(screen.getByText('95/300 生成中')).toBeInTheDocument()
+    })
+    expect(screen.getByText(/特化モード中のため変更できません/)).toBeInTheDocument()
+    expect((screen.getAllByRole('checkbox') as HTMLInputElement[]).every((checkbox) => checkbox.disabled)).toBe(true)
   })
 
   it('SRP vs BB / SRP: コールドコール / 3betポットの3グループが見出しとして表示される', () => {

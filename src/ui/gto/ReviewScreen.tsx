@@ -20,6 +20,7 @@ import { BlockerPanel } from './BlockerPanel'
 import { BetIntentPanel } from './BetIntentPanel'
 import { CollapsibleSection } from './CollapsibleSection'
 import { actionLabelJa, VERDICT_LABEL, VERDICT_COLOR, STREET_LABEL_JA } from './labels'
+import { TurnSolutionBadge } from './TurnSolutionBadge'
 
 function verdictMark(verdict: 'correct' | 'marginal' | 'incorrect'): string {
   return verdict === 'correct' ? '○' : verdict === 'marginal' ? '△' : '✕'
@@ -162,6 +163,8 @@ export function ReviewScreen() {
           次 ▶
         </button>
       </div>
+
+      {decision.street === 'turn' && decision.turnSolutionSource && <TurnSolutionBadge source={decision.turnSolutionSource} />}
 
       {/* 3. ボード+自分のハンド コンパクト1行(P7-3: この決断時点のボード=decision.boardAtDecisionを
           カードビジュアルで表示。通しモードのflop/turn決断では最終ボードより枚数が少ない)。 */}

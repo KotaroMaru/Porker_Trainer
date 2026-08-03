@@ -16,6 +16,7 @@ import {
   selectFlopPool,
   __resetAvailabilityInflightForTests,
 } from './store'
+import { activeScenarioIds } from './settings'
 import { __resetSolutionCacheForTests } from './loader/solutionLoader'
 import { createInProcessProviderFactory } from './trainer/inProcessProviderFactory'
 import type { NodeProviderFactory, StreetNodeProvider } from './trainer/nodeDataProvider'
@@ -51,6 +52,22 @@ function createMemoryStorage(): Storage {
 
 const binFetchStub = (async (input: RequestInfo | URL) => {
   const url = typeof input === 'string' ? input : input.toString()
+  // manifest.jsonも配信する。FLOPSには解が未生成のフロップも含まれる(対応数を段階的に
+
+  // 増やしているため)ので、本番同様availabilityで生成済みだけに絞れないと、
+
+  // 未生成フロップを引いてスポットが作れない。
+
+  const manifestMatch = url.match(/\/gto\/solutions\/([^/]+)\/manifest\.json$/)
+
+  if (manifestMatch) {
+
+    const dir = join(process.cwd(), 'public/gto/solutions', manifestMatch[1])
+
+    return new Response(await readFile(join(dir, 'manifest.json')), { status: 200 })
+
+  }
+
   const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
   if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
   const [, scenarioId, flopId] = match
@@ -219,7 +236,7 @@ describe('useGtoStore', () => {
     const originalLocalStorage = globalThis.localStorage
     Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
     try {
-      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: SCENARIOS.map((scenario) => scenario.id) }, availability: null })
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: SCENARIOS.map((scenario) => scenario.id), focusScenarioId: null }, availability: null })
       await useGtoStore.getState().startDailyChallenge('single')
       for (let i = 0; i < 10; i++) {
         const spot = useGtoStore.getState().spot
@@ -262,14 +279,14 @@ describe('useGtoStore', () => {
     } as unknown as FullHandController
     try {
       useGtoStore.setState({
-        settings: { mode: 'full', enabledScenarioIds: [] },
+        settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
         fullHandController: mockController,
         dailyChallenge: { dateKey: '2026-01-01', handIndex: 10, totalHands: 10, results: [], phase: 'done', ratingBefore: 1000, ratingAfter: 1005, mode: 'single' },
       })
       useGtoStore.getState().chooseAction('bet33')
       expect(chosenLabel).toBe('bet33')
     } finally {
-      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] }, fullHandController: null, dailyChallenge: null })
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null }, fullHandController: null, dailyChallenge: null })
     }
   })
 
@@ -292,7 +309,7 @@ describe('useGtoStore', () => {
     const originalLocalStorage = globalThis.localStorage
     Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
     try {
-      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
       await useGtoStore.getState().startNewSpot()
       const spot = useGtoStore.getState().spot
       if (!spot) throw new Error('spot should be set')
@@ -347,6 +364,22 @@ describe('useGtoStore', () => {
       // 後続テストへ影響しないようbeforeAllのスタブへ戻す
       globalThis.fetch = (async (input: RequestInfo | URL) => {
         const url = typeof input === 'string' ? input : input.toString()
+        // manifest.jsonも配信する。FLOPSには解が未生成のフロップも含まれる(対応数を段階的に
+
+        // 増やしているため)ので、本番同様availabilityで生成済みだけに絞れないと、
+
+        // 未生成フロップを引いてスポットが作れない。
+
+        const manifestMatch = url.match(/\/gto\/solutions\/([^/]+)\/manifest\.json$/)
+
+        if (manifestMatch) {
+
+          const dir = join(process.cwd(), 'public/gto/solutions', manifestMatch[1])
+
+          return new Response(await readFile(join(dir, 'manifest.json')), { status: 200 })
+
+        }
+
         const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
         if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
         const [, scenarioId, flopId] = match
@@ -510,7 +543,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       chosenLabel: null,
       errorMessage: null,
       sessionTally: initialTally(),
-      settings: { mode: 'full', enabledScenarioIds: [] },
+      settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
       fullHand: null,
       fullHandController: null,
       review: null,
@@ -586,7 +619,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     try {
       // ブックマークはreviewを直接復元するため、保存時のモードと再開時のモードは独立している。
       // 単発レビューを最小のフィクスチャとして保存し、通しモードでの再開状態を検証する。
-      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+      useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
       await useGtoStore.getState().startNewSpot()
       const spot = useGtoStore.getState().spot
       if (!spot) throw new Error('spot should be set')
@@ -609,7 +642,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       expect(disposeCount).toBe(1)
       expect(useGtoStore.getState().fullHandController).toBeNull()
 
-      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [] } })
+      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null } })
       const beforeStart = useGtoStore.getState().fullHand
       await useGtoStore.getState().startNewSpot()
       await waitForStorePause(beforeStart)
@@ -670,7 +703,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       return wrapped
     })
     try {
-      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: SCENARIOS.map((s) => s.id) }, availability: null })
+      useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: SCENARIOS.map((s) => s.id), focusScenarioId: null }, availability: null })
       const beforeStart = useGtoStore.getState().fullHand
       await useGtoStore.getState().startDailyChallenge('full')
       await waitForDailyPause(beforeStart)
@@ -862,7 +895,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
   }, 30_000)
 
   it('単発モードの既存動作には影響しない(settings.modeで完全に分岐)', async () => {
-    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
     await useGtoStore.getState().startNewSpot()
     const state = useGtoStore.getState()
     expect(state.status).toBe('userTurn')
@@ -875,7 +908,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
     // 単発モードで採点済み(status:'graded')の状態を作り、そのまま通しモードへ切り替える。
     // setMode内でstartNewSpot()を呼ばないと、statusが'graded'のまま残りFullHandPlayScreenの
     // どのブランチにも一致せず空白画面になっていた(実際にブラウザで確認したバグ)。
-    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [] } })
+    useGtoStore.setState({ settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
     await useGtoStore.getState().startNewSpot()
     const spot = useGtoStore.getState().spot
     if (!spot) throw new Error('spot should be set')
@@ -894,7 +927,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
   }, 30_000)
 
   it('setModeは実際にモードが変わらない場合は何もしない(不要な再スタートを避ける)', () => {
-    useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [] }, status: 'userTurn' })
+    useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null }, status: 'userTurn' })
     const before = useGtoStore.getState()
     useGtoStore.getState().setMode('full')
     const after = useGtoStore.getState()
@@ -925,6 +958,28 @@ describe('selectScenarioPool (P6 B9)', () => {
   it('出題可能なシナリオが1つも無ければFALLBACK_SCENARIO_ID(srp_btn_vs_bb)のみへフォールバックする', () => {
     const pool = selectScenarioPool(SCENARIOS, [], new Set())
     expect(pool.map((s) => s.id)).toEqual(['srp_btn_vs_bb'])
+  })
+})
+
+describe('activeScenarioIds (P15 特化モード)', () => {
+  const base = { mode: 'full' as const, enabledScenarioIds: ['srp_btn_vs_bb', 'srp_co_vs_bb', '3bet_btn_vs_bb'] }
+
+  it('通常モードではenabledScenarioIdsをそのまま使う', () => {
+    expect(activeScenarioIds({ ...base, focusScenarioId: null })).toEqual(base.enabledScenarioIds)
+  })
+
+  it('特化モード中はenabledScenarioIdsの内容にかかわらずそのシナリオのみになる', () => {
+    expect(activeScenarioIds({ ...base, focusScenarioId: 'srp_btn_vs_bb' })).toEqual(['srp_btn_vs_bb'])
+  })
+
+  it('特化対象がenabledScenarioIdsに含まれていなくても出題対象になる', () => {
+    // 設定画面でチェックを外していても、特化モードの選択が優先される。
+    expect(activeScenarioIds({ ...base, enabledScenarioIds: ['srp_co_vs_bb'], focusScenarioId: 'srp_btn_vs_bb' })).toEqual(['srp_btn_vs_bb'])
+  })
+
+  it('特化モードを解除するとenabledScenarioIdsが破壊されずに戻る', () => {
+    const focused = { ...base, focusScenarioId: 'srp_btn_vs_bb' }
+    expect(activeScenarioIds({ ...focused, focusScenarioId: null })).toEqual(base.enabledScenarioIds)
   })
 })
 

@@ -3,7 +3,14 @@
 //
 // 入力: src/gto/data/scenarios.ts (17マッチアップ定義)
 //       src/gto/data/preflopRanges.json (頻度付きプリフロップレンジ、38件)
-//       src/gto/data/flops.json (代表フロップ95件)
+//       src/gto/data/flops.json (代表フロップ。件数は段階的に増える。P15段階B-1で95→300)
+//
+// 注意: このスクリプトはflops.jsonを全17シナリオへ一律に写す。対応フロップ数を増やすと
+// 全シナリオのJSONが同じ件数になるが、実際にどこまで生成済みかはシナリオごとの
+// manifest.jsonが持ち、アプリはavailability経由でそれに絞り込む(store.tsのselectFlopPool)。
+// つまりJSONの件数は「生成対象の上限」であって「生成済み」ではない。
+// バッチ生成(gto-batch.yml)はシナリオ単位の手動起動なので、ここが増えても
+// 意図しない大量生成は起きない。
 // 出力: tools/solver/scenarios/{scenarioId}.json (tools/solver/FORMAT.md セクション5準拠)
 //
 // OOP/IP判定: src/gto/data/scenarios.tsのisOopPosition(唯一の正典。trainer層と共有)。

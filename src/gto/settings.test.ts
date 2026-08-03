@@ -48,9 +48,25 @@ describe('GtoSettings (localStorage永続化)', () => {
   })
 
   it('save→loadで往復する', () => {
-    const settings = { mode: 'full' as const, enabledScenarioIds: ['srp_btn_vs_bb', 'srp_co_vs_bb'] }
+    const settings = { mode: 'full' as const, enabledScenarioIds: ['srp_btn_vs_bb', 'srp_co_vs_bb'], focusScenarioId: null }
     saveGtoSettings(settings)
     expect(loadGtoSettings()).toEqual(settings)
+  })
+
+  it('特化モードのfocusScenarioIdが往復する', () => {
+    const settings = { mode: 'full' as const, enabledScenarioIds: ['srp_btn_vs_bb'], focusScenarioId: 'srp_btn_vs_bb' }
+    saveGtoSettings(settings)
+    expect(loadGtoSettings()).toEqual(settings)
+  })
+
+  it('focusScenarioIdが無い旧形式の保存値でも既存設定を失わない', () => {
+    // P15で後から追加したフィールド。「形が違う=既定値へ戻す」の対象にしてしまうと、
+    // 既存ユーザーのenabledScenarioIdsが消える。
+    localStorage.setItem('poker_trainer_gto_settings', JSON.stringify({ mode: 'full', enabledScenarioIds: ['srp_btn_vs_bb'] }))
+    const loaded = loadGtoSettings()
+    expect(loaded.mode).toBe('full')
+    expect(loaded.enabledScenarioIds).toEqual(['srp_btn_vs_bb'])
+    expect(loaded.focusScenarioId).toBeNull()
   })
 
   it('壊れたJSONが保存されている場合、またはlocalStorage自体が使えない場合はdefaultGtoSettingsにフォールバックする', () => {

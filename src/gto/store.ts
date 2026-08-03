@@ -32,7 +32,7 @@ import { selectClaims, type Claim } from './explain/evidence'
 import { FullHandController, type FullHandSnapshot } from './trainer/fullHandFlow'
 import { createWorkerProviderFactory } from './worker/workerProviderFactory'
 import type { NodeProviderFactory } from './trainer/nodeDataProvider'
-import { loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from './settings'
+import { activeScenarioIds, loadGtoSettings, saveGtoSettings, type GtoMode, type GtoSettings } from './settings'
 import { saveBookmark, loadBookmark, type SaveBookmarkResult } from './bookmarks/storage'
 import type { GradeResult } from './trainer/grading'
 import type { Scenario, FlopDef } from './types'
@@ -64,6 +64,42 @@ export function selectFlopPool(flops: readonly FlopDef[], availableFlopIds: read
   if (!availableFlopIds) return [...flops]
   const filtered = flops.filter((f) => availableFlopIds.includes(f.cards.join('')))
   return filtered.length > 0 ? filtered : [...flops]
+}
+
+/**
+ * プールからフロップを引き、解の取得に失敗したら別のフロップで引き直す。
+ *
+ * FLOPSには解がまだ生成されていないフロップも含まれる(段階的に対応フロップ数を
+ * 増やしていくため)。通常はavailability(manifest.json)で生成済みだけに絞られるが、
+ * manifestの取得に失敗するとselectFlopPoolは絞り込めずプール全体を返す。その状態で
+ * 未生成のフロップを引くと、以前は「スポットを作れない」で終わっていた。
+ * ここで引き直すことで、manifestが無い・古い・ネットワークが不安定といった状況でも
+ * プレイを継続できるようにする(availabilityが正しく効いていれば1回目で成功し、
+ * この経路には入らない)。
+ */
+export async function pickFlopWithSolution(
+  pool: readonly FlopDef[],
+  rng: (() => number) | undefined,
+  scenarioId: string,
+  // availabilityが効いていれば1回目で成功するので、この上限は縮退時にだけ意味を持つ。
+  // 対応フロップ数を先行して増やすと未生成の割合が上がる(例: 95/300なら約68%が空振り)。
+  // 5回では約15%が全滅してスポットを作れないため、20回とする(同条件で約0.04%)。
+  // 失敗したフロップはプールから除くので、実際の試行はこれより少なく収束する。
+  maxAttempts = 20,
+): Promise<{ flop: FlopDef; solution: Awaited<ReturnType<typeof loadFlopSolution>> }> {
+  let remaining = [...pool]
+  let lastError: unknown = null
+  for (let attempt = 0; attempt < maxAttempts && remaining.length > 0; attempt++) {
+    const flop = rng ? pickWeightedFlop(remaining, rng) : pickWeightedFlop(remaining)
+    const flopId = flop.cards.join('')
+    try {
+      return { flop, solution: await loadFlopSolution(scenarioId, flopId) }
+    } catch (e) {
+      lastError = e
+      remaining = remaining.filter((f) => f.cards.join('') !== flopId)
+    }
+  }
+  throw lastError ?? new Error(`no flop with a generated solution in scenario "${scenarioId}"`)
 }
 
 export type GtoStatus = 'idle' | 'loading' | 'userTurn' | 'graded' | 'error' | 'botThinking' | 'handOver'
@@ -188,6 +224,8 @@ export interface GtoState {
   settings: GtoSettings
   setMode: (mode: GtoMode) => void
   setScenarioEnabled: (id: string, enabled: boolean) => void
+  /** P15: 特化モードの切替。非nullで出題をそのシナリオへ固定し、通しモードを強制する。 */
+  setFocusScenario: (scenarioId: string | null) => void
 
   activeTab: GtoTab
   setActiveTab: (tab: GtoTab) => void
@@ -324,10 +362,13 @@ export const useGtoStore = create<GtoState>((set, get) => {
       await get().loadAvailability()
       const { settings, availability } = get()
       const playable = availability ? playableScenarioIds(availability) : new Set<string>()
-      const pool = selectScenarioPool(SCENARIOS, settings.enabledScenarioIds, playable)
+      const pool = selectScenarioPool(SCENARIOS, activeScenarioIds(settings), playable)
       const scenario = pickWeightedScenario(pool, seeds.scenarioRng)
-      const flop = pickWeightedFlop(selectFlopPool(FLOPS, availability?.get(scenario.id)), seeds.flopRng)
-      const flopSolution = await loadFlopSolution(scenario.id, flop.cards.join(''))
+      const { flop, solution: flopSolution } = await pickFlopWithSolution(
+        selectFlopPool(FLOPS, availability?.get(scenario.id)),
+        seeds.flopRng,
+        scenario.id,
+      )
       const userSeat: Seat = seeds.seatRng() < 0.5 ? 0 : 1
       // 非同期ロード中に別の日/問題へ切り替わっていた場合、古い問題を表示しない
       // (single/full共通で使う、controller構築直前・spot確定直後どちらでも呼べる純関数)。
@@ -449,6 +490,17 @@ export const useGtoStore = create<GtoState>((set, get) => {
     const next: GtoSettings = { ...settings, enabledScenarioIds }
     saveGtoSettings(next)
     set({ settings: next })
+  },
+  setFocusScenario: (scenarioId: string | null) => {
+    const { settings } = get()
+    if (settings.focusScenarioId === scenarioId) return
+    // 特化モードは通しモード前提。ターン事前計算は通しでしか使われないため、
+    // 単発のままだと「特化モードなのに恩恵ゼロ」という不整合になる。
+    const next: GtoSettings = { ...settings, focusScenarioId: scenarioId, mode: scenarioId ? 'full' : settings.mode }
+    saveGtoSettings(next)
+    set({ settings: next })
+    // setModeと同じ理由: 出題対象が変わるので必ずスポットを取り直す。
+    void get().startNewSpot()
   },
 
   availability: null,
@@ -662,13 +714,11 @@ export const useGtoStore = create<GtoState>((set, get) => {
     const { settings, availability } = get()
     try {
       const playable = availability ? playableScenarioIds(availability) : new Set<string>()
-      const pool = selectScenarioPool(SCENARIOS, settings.enabledScenarioIds, playable)
+      const pool = selectScenarioPool(SCENARIOS, activeScenarioIds(settings), playable)
       const scenario = pickWeightedScenario(pool)
 
       const flopPool = selectFlopPool(FLOPS, availability?.get(scenario.id))
-      const flop: FlopDef = pickWeightedFlop(flopPool)
-      const flopId = flop.cards.join('')
-      const flopSolution = await loadFlopSolution(scenario.id, flopId)
+      const { flop, solution: flopSolution } = await pickFlopWithSolution(flopPool, undefined, scenario.id)
       const userSeat: Seat = Math.random() < 0.5 ? 0 : 1
 
       if (settings.mode === 'full') {

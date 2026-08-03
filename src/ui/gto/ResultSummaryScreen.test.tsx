@@ -54,6 +54,7 @@ function baseSnapshot(result: HandResult): FullHandSnapshot {
   return {
     phase: 'over',
     street: 'river',
+    turnSolutionSource: null,
     board: board5,
     potBb: result.finalPotBb,
     solveProgress: null,

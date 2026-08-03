@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Card } from '../../engine/types'
-import { loadTurnBundleSolution, TURN_BUNDLE_BASE_URL } from './turnBundleSource'
+import { focusEligibleScenarioIds, loadTurnBundleSolution, TURN_BUNDLE_BASE_URL } from './turnBundleSource'
 
 function pushU8String(bytes: number[], value: string): void {
   bytes.push(value.length, ...[...value].map(char => char.charCodeAt(0)))
@@ -60,6 +60,10 @@ afterEach(() => {
 })
 
 describe('turnBundleSource', () => {
+  it('特化モード対象を収録済みシナリオから返す', () => {
+    expect(focusEligibleScenarioIds()).toEqual(['srp_btn_vs_bb'])
+  })
+
   it.each([
     ['収録外シナリオ', 'srp_co_vs_bb', 'check-check'],
     // オールイン経路はランアウトのみで決断が無く、恒久的にバンドルを持たない。

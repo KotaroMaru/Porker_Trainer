@@ -24,6 +24,7 @@ import { isOopPosition } from '../data/scenarios'
 import { rootNodeId, childNodeId, parseNodeId } from '../tree/nodeId'
 
 export type Street = 'preflop' | 'flop' | 'turn' | 'river'
+export type TurnSolutionSource = 'precomputed' | 'live'
 
 export interface HistoryEntry {
   street: Street
@@ -38,6 +39,8 @@ export interface HistoryEntry {
 
 export interface ReviewDecision {
   street: 'flop' | 'turn' | 'river'
+  /** 通しモードのターンで実際に使用した解の出所。ターン以外では未設定。 */
+  turnSolutionSource?: TurnSolutionSource
   nodeId: string
   /** 0=OOP, 1=IP。この決断の手番だったプレイヤー(=ユーザー)。 */
   seat: Seat

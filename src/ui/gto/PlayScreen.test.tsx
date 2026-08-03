@@ -7,7 +7,7 @@
 // 「レビューする」等の実クリックからのnextSpot誘発は実ネットワークを起こしうるため、
 // ResultSummaryScreen.test.tsxと同様にfetchをスタブする。
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -21,9 +21,26 @@ import type { FlopDef } from '../../gto/types'
 import type { FullHandSnapshot } from '../../gto/trainer/fullHandFlow'
 
 const originalFetch = globalThis.fetch
+const originalStartNewSpot = useGtoStore.getState().startNewSpot
 beforeAll(() => {
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input.toString()
+    // manifest.jsonも配信する。FLOPSには解が未生成のフロップも含まれる(対応数を段階的に
+
+    // 増やしているため)ので、本番同様availabilityで生成済みだけに絞れないと、
+
+    // 未生成フロップを引いてスポットが作れない。
+
+    const manifestMatch = url.match(/\/gto\/solutions\/([^/]+)\/manifest\.json$/)
+
+    if (manifestMatch) {
+
+      const dir = join(process.cwd(), 'public/gto/solutions', manifestMatch[1])
+
+      return new Response(await readFile(join(dir, 'manifest.json')), { status: 200 })
+
+    }
+
     const match = url.match(/\/gto\/solutions\/([^/]+)\/([^/]+)\.bin$/)
     if (!match) throw new Error(`unexpected fetch url in test stub: ${url}`)
     const [, scenarioId, flopId] = match
@@ -57,6 +74,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
   return {
     phase: 'userTurn',
     street: 'flop',
+    turnSolutionSource: null,
     board: board3,
     potBb: scenario.potBb,
     solveProgress: null,
@@ -85,7 +103,8 @@ function resetToFullMode(overrides: Partial<ReturnType<typeof useGtoStore.getSta
     chosenLabel: null,
     errorMessage: null,
     sessionTally: initialTally(),
-    settings: { mode: 'full', enabledScenarioIds: [] },
+    startNewSpot: originalStartNewSpot,
+    settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
     fullHand: null,
     fullHandController: null,
     review: null,
@@ -97,6 +116,51 @@ function resetToFullMode(overrides: Partial<ReturnType<typeof useGtoStore.getSta
 }
 
 describe('PlayScreen (通しモード, P6 B8)', () => {
+  it('特化モードカードはカバレッジ対象の日本語名を表示し、オンで対象シナリオへ固定する', () => {
+    const startNewSpot = vi.fn()
+    resetToFullMode({ startNewSpot })
+    render(<PlayScreen />)
+
+    expect(screen.getByText('BTN vs BB・SRP')).toBeInTheDocument()
+    expect(screen.getByText(/ターン以降が事前計算済み/)).toBeInTheDocument()
+    screen.getByRole('switch').click()
+
+    expect(useGtoStore.getState().settings).toMatchObject({ mode: 'full', focusScenarioId: 'srp_btn_vs_bb' })
+    expect(startNewSpot).toHaveBeenCalledOnce()
+  })
+
+  it('特化モードカードをオフにすると通常の出題設定へ戻る', () => {
+    const startNewSpot = vi.fn()
+    resetToFullMode({
+      startNewSpot,
+      settings: { mode: 'full', enabledScenarioIds: ['srp_co_vs_bb'], focusScenarioId: 'srp_btn_vs_bb' },
+    })
+    render(<PlayScreen />)
+
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
+    screen.getByRole('switch').click()
+    expect(useGtoStore.getState().settings.enabledScenarioIds).toEqual(['srp_co_vs_bb'])
+    expect(useGtoStore.getState().settings.focusScenarioId).toBeNull()
+  })
+
+  it('ターンでその場で解析した場合のみ「計算」バッジを表示する', () => {
+    resetToFullMode({ fullHand: baseFullHand({ street: 'turn', turnSolutionSource: 'live' }) })
+    render(<PlayScreen />)
+    expect(screen.getByText('計算')).toBeInTheDocument()
+  })
+
+  it('ターンでも事前計算解を使えた場合はバッジを出さない(何も出ないことが正常を表す)', () => {
+    resetToFullMode({ fullHand: baseFullHand({ street: 'turn', turnSolutionSource: 'precomputed' }) })
+    render(<PlayScreen />)
+    expect(screen.queryByText('計算')).not.toBeInTheDocument()
+  })
+
+  it('フロップとリバーでは解の出所バッジを表示しない', () => {
+    resetToFullMode({ fullHand: baseFullHand({ street: 'river', turnSolutionSource: 'live' }) })
+    render(<PlayScreen />)
+    expect(screen.queryByText('計算')).not.toBeInTheDocument()
+  })
+
   it('botThinking中は進捗パーセンテージ付きの文言を表示し、アクションボタンは出さない', () => {
     resetToFullMode({ status: 'botThinking', fullHand: baseFullHand({ phase: 'botDeciding', solveProgress: 0.42 }) })
     render(<PlayScreen />)
@@ -190,7 +254,7 @@ describe('PlayScreen (通しモード, P6 B8)', () => {
     // FullHandControllerを実際に走らせず、単発モードの実データ経路でreviewを1件構築し、
     // それをそのままstore.reviewへ差し込んでmode='full'/status='graded'の描画を検証する
     // (ReviewScreen.tsx自体はモードを意識しないため、この合成で妥当な検証になる)。
-    resetToFullMode({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [] } })
+    resetToFullMode({ status: 'idle', settings: { mode: 'single', enabledScenarioIds: [], focusScenarioId: null } })
     await useGtoStore.getState().startNewSpot()
     const spot = useGtoStore.getState().spot
     if (!spot) throw new Error('spot should be set')
@@ -199,7 +263,7 @@ describe('PlayScreen (通しモード, P6 B8)', () => {
     if (!review) throw new Error('review should be set')
 
     useGtoStore.setState({
-      settings: { mode: 'full', enabledScenarioIds: [] },
+      settings: { mode: 'full', enabledScenarioIds: [], focusScenarioId: null },
       status: 'graded',
       fullHand: baseFullHand({ phase: 'over', result: { endedBy: 'showdown', userNetBb: 1, finalPotBb: 11, finalBoard: board3, botCombo: null, decisionSummaries: [] } }),
     })

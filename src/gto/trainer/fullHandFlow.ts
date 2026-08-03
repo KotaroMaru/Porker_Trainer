@@ -40,7 +40,7 @@ import { gradeDecision, type GradeResult, type GradeVerdict } from './grading'
 import { actionInvestmentsBb, actionLabelsWithAmounts } from './actionMath'
 import { buildPreflopScript } from './preflopScript'
 import { boardFromFlop, type Seat } from './gameFlow'
-import { initialWeightsInSolutionOrder, type HistoryEntry, type ReviewData, type ReviewDecision } from './reviewBuilder'
+import { initialWeightsInSolutionOrder, type HistoryEntry, type ReviewData, type ReviewDecision, type TurnSolutionSource } from './reviewBuilder'
 import type { NodeProviderFactory, StreetNodeProvider, StreetSolveInput } from './nodeDataProvider'
 import { createPrecomputedProvider } from './precomputedProvider'
 import { loadTurnBundleSolution } from '../loader/turnBundleSource'
@@ -70,6 +70,8 @@ export interface HandResult {
 export interface FullHandSnapshot {
   phase: HandPhase
   street: FullHandStreet
+  /** ターンで実際に使用した解の出所。ターン到達前はnull。 */
+  turnSolutionSource: TurnSolutionSource | null
   board: Card[]
   potBb: number
   /** botDeciding中のライブソルブ進捗(0..1)。それ以外はnull。 */
@@ -134,6 +136,7 @@ interface LatestAction {
 
 interface PendingUserDecision {
   street: FullHandStreet
+  turnSolutionSource?: TurnSolutionSource
   nodeId: string
   boardAtDecision: Card[]
   potBbAtDecision: number
@@ -300,6 +303,7 @@ export async function computeStreetHarvest(params: {
 
     decisions.push({
       street: d.street,
+      turnSolutionSource: d.turnSolutionSource,
       nodeId: d.nodeId,
       seat: userSeat,
       boardAtDecision: d.boardAtDecision,
@@ -329,6 +333,8 @@ export class FullHandController {
   private readonly deps: FullHandControllerDeps
   private phase: HandPhase = 'userTurn'
   private street: FullHandStreet = 'flop'
+  /** 収録リストではなく、ターン遷移時の実際の取得・検証結果から設定する。 */
+  private turnSolutionSource: TurnSolutionSource | null = null
   private board: Card[]
   private potBb: number
   private remainingStackBb: number
@@ -442,6 +448,7 @@ export class FullHandController {
     this.deps.onUpdate({
       phase: this.phase,
       street: this.street,
+      turnSolutionSource: this.turnSolutionSource,
       board: this.board,
       potBb: this.potBb,
       solveProgress,
@@ -506,6 +513,7 @@ export class FullHandController {
     if (isUser) {
       this.streetUserDecisions.push({
         street: this.street,
+        turnSolutionSource: this.street === 'turn' ? (this.turnSolutionSource ?? undefined) : undefined,
         nodeId: this.curNodeId,
         boardAtDecision: this.board,
         potBbAtDecision: decisionNode.potBb ?? this.potBb,
@@ -821,6 +829,8 @@ export class FullHandController {
       this.provider = this.deps.providerFactory.forLiveStreet(solveInput)
     }
     if (nextStreet === 'turn') {
+      // バッジの正典。取得成功だけでなくコンボ順検証まで通った実際の分岐結果を記録する。
+      this.turnSolutionSource = bundledTurnSolution ? 'precomputed' : 'live'
       if (bundledTurnSolution) {
         // 事前計算解は既に精密なので、背景リファイン素材として保持・予約しない。
         this.turnProvider = null
