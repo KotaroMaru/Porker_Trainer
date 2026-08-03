@@ -7,7 +7,7 @@
 // 「レビューする」等の実クリックからのnextSpot誘発は実ネットワークを起こしうるため、
 // ResultSummaryScreen.test.tsxと同様にfetchをスタブする。
 
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -116,33 +116,6 @@ function resetToFullMode(overrides: Partial<ReturnType<typeof useGtoStore.getSta
 }
 
 describe('PlayScreen (通しモード, P6 B8)', () => {
-  it('特化モードカードはカバレッジ対象の日本語名を表示し、オンで対象シナリオへ固定する', () => {
-    const startNewSpot = vi.fn()
-    resetToFullMode({ startNewSpot })
-    render(<PlayScreen />)
-
-    expect(screen.getByText('BTN vs BB・SRP')).toBeInTheDocument()
-    expect(screen.getByText(/ターン以降が事前計算済み/)).toBeInTheDocument()
-    screen.getByRole('switch').click()
-
-    expect(useGtoStore.getState().settings).toMatchObject({ mode: 'full', focusScenarioId: 'srp_btn_vs_bb' })
-    expect(startNewSpot).toHaveBeenCalledOnce()
-  })
-
-  it('特化モードカードをオフにすると通常の出題設定へ戻る', () => {
-    const startNewSpot = vi.fn()
-    resetToFullMode({
-      startNewSpot,
-      settings: { mode: 'full', enabledScenarioIds: ['srp_co_vs_bb'], focusScenarioId: 'srp_btn_vs_bb' },
-    })
-    render(<PlayScreen />)
-
-    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true')
-    screen.getByRole('switch').click()
-    expect(useGtoStore.getState().settings.enabledScenarioIds).toEqual(['srp_co_vs_bb'])
-    expect(useGtoStore.getState().settings.focusScenarioId).toBeNull()
-  })
-
   it('ターンでその場で解析した場合のみ「計算」バッジを表示する', () => {
     resetToFullMode({ fullHand: baseFullHand({ street: 'turn', turnSolutionSource: 'live' }) })
     render(<PlayScreen />)

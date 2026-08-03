@@ -8,6 +8,7 @@ import { useGtoStore } from '../../gto/store'
 import { SCENARIOS } from '../../gto/data/scenarios'
 import { FLOPS } from '../../gto/data/flops'
 import { MIN_FLOPS_FOR_PLAY } from '../../gto/loader/availability'
+import { focusEligibleScenarioIds } from '../../gto/loader/turnBundleSource'
 import type { Scenario } from '../../gto/types'
 import type { GtoMode } from '../../gto/settings'
 
@@ -15,6 +16,81 @@ const MODE_OPTIONS: { value: GtoMode; label: string }[] = [
   { value: 'single', label: '単発' },
   { value: 'full', label: '通し' },
 ]
+
+/**
+ * P15 特化モード: 出題を1シナリオへ固定し、ターン以降の事前計算解を使う。
+ *
+ * プレイ画面ではなく設定画面へ置く(プレイ中に常時見えている必要がなく、
+ * 画面を圧迫するため)。状態はスイッチの見た目とラベルの両方で示す。
+ * 対応シナリオが増えたらセレクトへ変える。現状は1つなのでトグルで足りる。
+ */
+function FocusModeToggle() {
+  const { settings, setFocusScenario } = useGtoStore()
+  const targetId = focusEligibleScenarioIds()[0]
+  const target = SCENARIOS.find((s) => s.id === targetId)
+  if (!target) return null
+
+  const on = settings.focusScenarioId === target.id
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>特化モード</div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={on}
+        aria-label="特化モード"
+        onClick={() => setFocusScenario(on ? null : target.id)}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 10,
+          width: '100%',
+          padding: '10px 12px',
+          border: `1px solid ${on ? 'var(--gold)' : 'var(--panel-border)'}`,
+          borderRadius: 8,
+          background: on ? 'rgba(200,168,75,0.12)' : 'transparent',
+          textAlign: 'left',
+        }}
+      >
+        <span
+          aria-hidden
+          style={{
+            flex: '0 0 auto',
+            width: 34,
+            height: 20,
+            borderRadius: 999,
+            background: on ? 'var(--gold)' : 'var(--panel-border)',
+            position: 'relative',
+            transition: 'background 120ms',
+          }}
+        >
+          <span
+            style={{
+              position: 'absolute',
+              top: 2,
+              left: on ? 16 : 2,
+              width: 16,
+              height: 16,
+              borderRadius: '50%',
+              background: 'var(--panel-bg)',
+              transition: 'left 120ms',
+            }}
+          />
+        </span>
+        <span style={{ flex: 1, minWidth: 0 }}>
+          <span style={{ fontSize: 14, fontWeight: on ? 700 : 500, color: on ? 'var(--gold-light)' : 'var(--text)' }}>
+            {on ? 'オン' : 'オフ'}
+          </span>
+          <span style={{ marginLeft: 8, fontSize: 12.5, color: 'var(--text-dim)' }}>{target.label}</span>
+        </span>
+      </button>
+      <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-dim)' }}>
+        オンにすると出題をこのシナリオへ固定し、通しモードになります。ターン以降が事前計算済みで待ち時間がありません。
+      </div>
+    </div>
+  )
+}
 
 function groupLabel(s: Scenario): string {
   if (s.kind === 'THREEBET') return '3betポット'
@@ -72,6 +148,8 @@ export function SettingsScreen() {
           ))}
         </div>
       </div>
+
+      <FocusModeToggle />
 
       <div>
         <div style={{ fontSize: 13, color: 'var(--text-dim)', marginBottom: 8 }}>

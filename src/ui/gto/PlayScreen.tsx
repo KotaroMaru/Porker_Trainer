@@ -8,8 +8,6 @@ import { actionLabelJa } from './labels'
 import { PokerTableView } from './PokerTableView'
 import { ActionButtonRow } from './ActionButtonRow'
 import { SingleSpotHistoryStrip, FullHandHistoryStrip } from './StreetHistoryStrip'
-import { focusEligibleScenarioIds } from '../../gto/loader/turnBundleSource'
-import { SCENARIOS } from '../../gto/data/scenarios'
 import { TurnSolutionBadge } from './TurnSolutionBadge'
 
 // P4 Step D / P5 Step B9: プレイ画面。settings.modeで単発/通しの2実装に分岐する
@@ -23,44 +21,11 @@ export function PlayScreen() {
   const mode = useGtoStore((s) => s.settings.mode)
   return mode === 'full' ? (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <FocusModeCards />
       <FullHandPlayScreen />
     </div>
   ) : (
     <SingleSpotPlayScreen />
   )
-}
-
-function FocusModeCards() {
-  const { settings, setFocusScenario } = useGtoStore()
-  const eligibleIds = focusEligibleScenarioIds()
-  const scenarios = eligibleIds.map((id) => SCENARIOS.find((scenario) => scenario.id === id)).filter((scenario) => scenario !== undefined)
-
-  return scenarios.map((scenario) => {
-    const active = settings.focusScenarioId === scenario.id
-    return (
-      <section
-        key={scenario.id}
-        aria-label="特化モード"
-        style={{ padding: '12px 14px', border: '1px solid var(--panel-border)', borderRadius: 10, background: 'var(--panel-bg)' }}
-      >
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
-          <div style={{ fontWeight: 700, color: 'var(--gold-light)' }}>⚡ 特化モード</div>
-          <button
-            type="button"
-            role="switch"
-            aria-checked={active}
-            onClick={() => setFocusScenario(active ? null : scenario.id)}
-            style={{ padding: '5px 12px', borderRadius: 999 }}
-          >
-            {active ? 'オン' : 'オフ'}
-          </button>
-        </div>
-        <div style={{ marginTop: 6, fontSize: 13.5 }}>{scenario.label}</div>
-        <div style={{ marginTop: 3, color: 'var(--text-dim)', fontSize: 12.5 }}>ターン以降が事前計算済み（待ち時間なし）</div>
-      </section>
-    )
-  })
 }
 
 // ============================================================

@@ -26,7 +26,7 @@ import { FLOPS } from './data/flops'
 import { loadDailyResults } from './dailyChallenge/storage'
 import { computeCustomHandReview } from './trainer/customHandReview'
 import type { ReviewData } from './trainer/reviewBuilder'
-import { initialDivergenceTally } from './stats/divergence'
+import { initialDivergenceStats } from './stats/divergence'
 
 vi.mock('./trainer/customHandReview', () => ({ computeCustomHandReview: vi.fn() }))
 
@@ -98,7 +98,7 @@ beforeEach(() => {
     activeDecisionIdx: 0,
     // P11 Phase D-3: divergenceTallyはモジュールロード時に1回だけloadDivergenceTally()
     // されるsingletonなstate(dailyRank同様)なので、テスト間の汚染を防ぐため明示的にリセットする。
-    divergenceTally: initialDivergenceTally(),
+    divergenceTally: initialDivergenceStats(),
   })
 })
 
@@ -225,7 +225,7 @@ describe('useGtoStore', () => {
 
       useGtoStore.getState().resetDivergenceStats()
 
-      expect(useGtoStore.getState().divergenceTally).toEqual({ decisionCount: 0, userCount: { fold: 0, passive: 0, aggressive: 0 }, gtoFreqSum: { fold: 0, passive: 0, aggressive: 0 } })
+      expect(useGtoStore.getState().divergenceTally).toEqual(initialDivergenceStats())
       expect(globalThis.localStorage.getItem('poker_trainer_gto_divergence')).toBeNull()
     } finally {
       Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
@@ -550,7 +550,7 @@ describe('useGtoStore (通しモード, P6 B7)', () => {
       reviewFeatures: [],
       reviewFeaturesStatus: 'idle',
       activeDecisionIdx: 0,
-      divergenceTally: initialDivergenceTally(),
+      divergenceTally: initialDivergenceStats(),
     })
   })
 

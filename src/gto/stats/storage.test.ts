@@ -1,110 +1,62 @@
-// P11 Phase D-2: storage.tsのテスト。このテスト環境のglobalThis.localStorageは
-// メソッド呼び出しが例外を投げる制約があるため(settings.test.ts/bookmarks/storage.test.ts
-// で確認済み)、Mapベースの簡易実装に差し替えて往復を検証する。
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { accumulateDivergenceStats, initialDivergenceStats, type DivergenceTally } from './divergence'
+import { loadDivergenceTally, resetDivergenceTally, saveDivergenceTally } from './storage'
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { loadDivergenceTally, saveDivergenceTally, resetDivergenceTally } from './storage'
-import { initialDivergenceTally, accumulateDivergence } from './divergence'
-import type { ActionBreakdownEntry } from '../trainer/grading'
-
-function createMemoryStorage(): Storage {
+function memoryStorage(): Storage {
   const map = new Map<string, string>()
   return {
-    getItem: (key: string) => map.get(key) ?? null,
-    setItem: (key: string, value: string) => {
-      map.set(key, value)
-    },
-    removeItem: (key: string) => {
-      map.delete(key)
-    },
+    getItem: (key) => map.get(key) ?? null,
+    setItem: (key, value) => map.set(key, value),
+    removeItem: (key) => map.delete(key),
     clear: () => map.clear(),
-    key: (i: number) => [...map.keys()][i] ?? null,
-    get length() {
-      return map.size
-    },
+    key: (index) => [...map.keys()][index] ?? null,
+    get length() { return map.size },
   } as Storage
 }
 
-const SAMPLE_BREAKDOWN: ActionBreakdownEntry[] = [
-  { label: 'fold', freq: 0.3, evBb: -1 },
-  { label: 'check', freq: 0.5, evBb: 0 },
-  { label: 'bet33', freq: 0.2, evBb: 1 },
-]
+describe('divergence storage v2', () => {
+  const original = globalThis.localStorage
+  beforeEach(() => Object.defineProperty(globalThis, 'localStorage', { value: memoryStorage(), configurable: true }))
+  afterEach(() => Object.defineProperty(globalThis, 'localStorage', { value: original, configurable: true }))
 
-describe('gto/stats/storage (localStorage永続化)', () => {
-  const originalLocalStorage = globalThis.localStorage
-
-  beforeEach(() => {
-    Object.defineProperty(globalThis, 'localStorage', { value: createMemoryStorage(), configurable: true })
+  it('v2を保存して次元集計ごと往復する', () => {
+    const stats = accumulateDivergenceStats(
+      initialDivergenceStats(),
+      [{ label: 'fold', freq: 0.4, evBb: 0 }, { label: 'call', freq: 0.6, evBb: 0 }],
+      'call',
+      { street: 'turn', flopPath: 'check-check', texture: { monotone: false, twoTone: true, paired: false }, focusScenarioId: 'srp_btn_vs_bb' },
+    )
+    saveDivergenceTally(stats)
+    expect(loadDivergenceTally()).toEqual(stats)
   })
 
-  afterEach(() => {
-    Object.defineProperty(globalThis, 'localStorage', { value: originalLocalStorage, configurable: true })
+  it('旧形式を捨てずX用の全体集計へ移し、条件付きfoldは0から集計する', () => {
+    const legacy: DivergenceTally = {
+      decisionCount: 42,
+      userCount: { fold: 8, passive: 20, aggressive: 14 },
+      gtoFreqSum: { fold: 10, passive: 18, aggressive: 14 },
+    }
+    localStorage.setItem('poker_trainer_gto_divergence', JSON.stringify(legacy))
+    const migrated = loadDivergenceTally()
+    expect(migrated.decisionCount).toBe(42)
+    expect(migrated.userCount).toEqual(legacy.userCount)
+    expect(migrated.gtoFreqSum).toEqual(legacy.gtoFreqSum)
+    expect(migrated.legacyDecisionCount).toBe(42)
+    expect(migrated.foldEligibleCount).toBe(0)
   })
 
-  it('未保存時はinitialDivergenceTally()を返す', () => {
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
-  })
-
-  it('save→loadで往復する', () => {
-    const tally = accumulateDivergence(initialDivergenceTally(), SAMPLE_BREAKDOWN, 'fold')
-    saveDivergenceTally(tally)
-    expect(loadDivergenceTally()).toEqual(tally)
-  })
-
-  it('複数回accumulateした後もsave→loadで往復する', () => {
-    let tally = initialDivergenceTally()
-    tally = accumulateDivergence(tally, SAMPLE_BREAKDOWN, 'fold')
-    tally = accumulateDivergence(tally, SAMPLE_BREAKDOWN, 'check')
-    tally = accumulateDivergence(tally, SAMPLE_BREAKDOWN, 'bet33')
-    saveDivergenceTally(tally)
-    expect(loadDivergenceTally()).toEqual(tally)
-  })
-
-  it('resetDivergenceTallyでlocalStorageから削除され、以後の読み込みは初期値になる', () => {
-    const tally = accumulateDivergence(initialDivergenceTally(), SAMPLE_BREAKDOWN, 'fold')
-    saveDivergenceTally(tally)
-    expect(loadDivergenceTally()).toEqual(tally)
-
+  it('破損値は初期値へ戻り、resetで保存値を削除する', () => {
+    localStorage.setItem('poker_trainer_gto_divergence', '{broken')
+    expect(loadDivergenceTally()).toEqual(initialDivergenceStats())
+    saveDivergenceTally(initialDivergenceStats())
     resetDivergenceTally()
     expect(localStorage.getItem('poker_trainer_gto_divergence')).toBeNull()
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
   })
 
-  it('壊れたJSONが保存されている場合はinitialDivergenceTally()にフォールバックする', () => {
-    localStorage.setItem('poker_trainer_gto_divergence', '{not valid json')
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
-  })
-
-  it('形が不正なデータ(decisionCountが数値でない・bucketキー欠落)はinitialDivergenceTally()にフォールバックする', () => {
-    localStorage.setItem('poker_trainer_gto_divergence', JSON.stringify({ decisionCount: 'not-a-number' }))
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
-
-    localStorage.setItem(
-      'poker_trainer_gto_divergence',
-      JSON.stringify({ decisionCount: 3, userCount: { fold: 1, passive: 2 }, gtoFreqSum: { fold: 1, passive: 1, aggressive: 1 } }),
-    )
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
-  })
-
-  it('localStorage自体が使えない環境(プライベートブラウジング等)ではloadは初期値・saveは例外を投げない', () => {
-    Object.defineProperty(globalThis, 'localStorage', {
-      value: {
-        getItem: () => {
-          throw new Error('denied')
-        },
-        setItem: () => {
-          throw new Error('denied')
-        },
-        removeItem: () => {
-          throw new Error('denied')
-        },
-      },
-      configurable: true,
-    })
-
-    expect(loadDivergenceTally()).toEqual(initialDivergenceTally())
-    expect(() => saveDivergenceTally(initialDivergenceTally())).not.toThrow()
+  it('localStorageが例外を投げても練習を止めない', () => {
+    Object.defineProperty(globalThis, 'localStorage', { value: { getItem: () => { throw new Error('denied') }, setItem: () => { throw new Error('denied') }, removeItem: () => { throw new Error('denied') } }, configurable: true })
+    expect(loadDivergenceTally()).toEqual(initialDivergenceStats())
+    expect(() => saveDivergenceTally(initialDivergenceStats())).not.toThrow()
     expect(() => resetDivergenceTally()).not.toThrow()
   })
 })

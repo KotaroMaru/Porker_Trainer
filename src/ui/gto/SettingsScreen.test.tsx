@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { SettingsScreen } from './SettingsScreen'
 import { useGtoStore, initialTally, __resetAvailabilityInflightForTests } from '../../gto/store'
 import { defaultGtoSettings } from '../../gto/settings'
@@ -92,6 +92,31 @@ describe('SettingsScreen', () => {
     enabledCheckbox.click()
 
     expect(useGtoStore.getState().settings.enabledScenarioIds).not.toContain('srp_btn_vs_bb')
+  })
+
+  it('特化モードのトグルはオン/オフを文言とaria-checkedの両方で示す', () => {
+    render(<SettingsScreen />)
+    const toggle = screen.getByRole('switch', { name: '特化モード' })
+    expect(toggle).toHaveAttribute('aria-checked', 'false')
+    // 「BTN vs BB・SRP」はシナリオ一覧にも現れるので、トグル内に限定して探す。
+    expect(within(toggle).getByText('オフ')).toBeInTheDocument()
+    expect(within(toggle).getByText('BTN vs BB・SRP')).toBeInTheDocument()
+  })
+
+  it('特化モードをオンにすると対象シナリオへ固定し、通しモードになる', () => {
+    render(<SettingsScreen />)
+    screen.getByRole('switch', { name: '特化モード' }).click()
+    expect(useGtoStore.getState().settings).toMatchObject({ mode: 'full', focusScenarioId: 'srp_btn_vs_bb' })
+  })
+
+  it('特化モードをオフにしてもenabledScenarioIdsは破壊されない', () => {
+    useGtoStore.setState({ settings: { mode: 'full', enabledScenarioIds: ['srp_co_vs_bb'], focusScenarioId: 'srp_btn_vs_bb' } })
+    render(<SettingsScreen />)
+    const toggle = screen.getByRole('switch', { name: '特化モード' })
+    expect(toggle).toHaveAttribute('aria-checked', 'true')
+    toggle.click()
+    expect(useGtoStore.getState().settings.enabledScenarioIds).toEqual(['srp_co_vs_bb'])
+    expect(useGtoStore.getState().settings.focusScenarioId).toBeNull()
   })
 
   it('特化モード中は理由を表示し、生成済みを含む全シナリオの変更を無効化する', async () => {
