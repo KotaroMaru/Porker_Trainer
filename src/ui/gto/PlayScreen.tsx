@@ -188,7 +188,7 @@ function FullHandPlayScreen() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <FullHandHistoryStrip history={fullHand.history} currentStreet={fullHand.street} />
 
-      {fullHand.street === 'turn' && fullHand.turnSolutionSource && <TurnSolutionBadge source={fullHand.turnSolutionSource} />}
+      {fullHand.street === 'turn' && fullHand.turnSolutionSource && <TurnSolutionBadge source={fullHand.turnSolutionSource} reason={fullHand.turnFallbackReason} />}
 
       {/* テーブル */}
       <PokerTableView

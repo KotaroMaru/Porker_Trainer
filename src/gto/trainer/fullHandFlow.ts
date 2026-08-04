@@ -43,10 +43,12 @@ import { boardFromFlop, type Seat } from './gameFlow'
 import { initialWeightsInSolutionOrder, type HistoryEntry, type ReviewData, type ReviewDecision, type TurnSolutionSource } from './reviewBuilder'
 import type { NodeProviderFactory, StreetNodeProvider, StreetSolveInput } from './nodeDataProvider'
 import { createPrecomputedProvider } from './precomputedProvider'
-import { loadTurnBundleSolution } from '../loader/turnBundleSource'
+import { hasRecordedTurnBundle, loadTurnBundleSolution } from '../loader/turnBundleSource'
 
 export type FullHandStreet = 'flop' | 'turn' | 'river'
 export type HandPhase = 'userTurn' | 'botDeciding' | 'grading' | 'over'
+/** ターンで事前計算バンドルを使えなかった理由(切り分け用)。 */
+export type TurnFallbackReason = 'noFlopPath' | 'notRecorded' | 'fetchFailed' | 'comboMismatch'
 
 export interface DecisionSummary {
   street: FullHandStreet
@@ -72,6 +74,8 @@ export interface FullHandSnapshot {
   street: FullHandStreet
   /** ターンで実際に使用した解の出所。ターン到達前はnull。 */
   turnSolutionSource: TurnSolutionSource | null
+  /** turnSolutionSource==='live'のとき、なぜ事前計算を使えなかったか。 */
+  turnFallbackReason: TurnFallbackReason | null
   board: Card[]
   potBb: number
   /** botDeciding中のライブソルブ進捗(0..1)。それ以外はnull。 */
@@ -351,6 +355,13 @@ export class FullHandController {
   private street: FullHandStreet = 'flop'
   /** 収録リストではなく、ターン遷移時の実際の取得・検証結果から設定する。 */
   private turnSolutionSource: TurnSolutionSource | null = null
+  /**
+   * ターンでライブソルブへ退避した理由。バンドルが使えたときはnull。
+   *
+   * 退避は数値破綻を防ぐ正常系として黙って行われるため、理由を残さないと
+   * 「特化モードなのにターンで計算が入る」が起きたときに外から切り分けられない。
+   */
+  private turnFallbackReason: TurnFallbackReason | null = null
   private board: Card[]
   private potBb: number
   private remainingStackBb: number
@@ -465,6 +476,7 @@ export class FullHandController {
       phase: this.phase,
       street: this.street,
       turnSolutionSource: this.turnSolutionSource,
+      turnFallbackReason: this.turnFallbackReason,
       board: this.board,
       potBb: this.potBb,
       solveProgress,
@@ -843,12 +855,22 @@ export class FullHandController {
     // 0を落とすfilteredOop/Ipと突き合わせると常に不一致になりバンドルが使われない。
     const bundleOopCombos = excludeDeadCardOnly(this.provider.oopCombos, cardK)
     const bundleIpCombos = excludeDeadCardOnly(this.provider.ipCombos, cardK)
-    const bundledTurnSolution =
-      loadedTurnSolution &&
+    const combosMatch =
+      loadedTurnSolution !== null &&
       sameComboOrder(loadedTurnSolution.oopCombos, bundleOopCombos) &&
       sameComboOrder(loadedTurnSolution.ipCombos, bundleIpCombos)
-        ? loadedTurnSolution
-        : null
+    const bundledTurnSolution = combosMatch ? loadedTurnSolution : null
+    if (nextStreet === 'turn') {
+      this.turnFallbackReason = bundledTurnSolution
+        ? null
+        : completedFlopPathId === null
+          ? 'noFlopPath'
+          : !hasRecordedTurnBundle(this.deps.scenario.id, completedFlopPathId)
+            ? 'notRecorded'
+            : loadedTurnSolution === null
+              ? 'fetchFailed'
+              : 'comboMismatch'
+    }
 
     if (bundledTurnSolution) {
       const precomputed = this.deps.providerFactory.forFlop(bundledTurnSolution, newBoard)

@@ -75,6 +75,7 @@ function baseFullHand(overrides: Partial<FullHandSnapshot>): FullHandSnapshot {
     phase: 'userTurn',
     street: 'flop',
     turnSolutionSource: null,
+  turnFallbackReason: null,
     board: board3,
     potBb: scenario.potBb,
     solveProgress: null,
