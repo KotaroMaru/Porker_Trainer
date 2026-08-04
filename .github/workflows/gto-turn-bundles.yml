@@ -43,10 +43,11 @@ jobs:
       max-parallel: 20
       matrix:
         shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
-        # 経路を第2次元にして1ジョブの担当量を1/3へ減らす。300フロップ×9経路を
-        # 20シャードだけで割ると1ジョブ約9.8時間となり6時間上限を超えるため。
-        # (フロップ×経路の担当は shard と pathGroup の組で一意に決まる)
-        pathGroup: [0, 1, 2]
+        # 1ジョブ=1経路。経路ごとに所要が大きく違うため、束ねると重い経路を含む
+        # グループだけが6時間上限に触れる(3分割時にcheck-checkを含むgroup1のみ
+        # cancelledになった。ベットが無いぶんスタックが深くターンの木が最大になる)。
+        # 1経路なら15フロップ×最大350秒≒1.5時間で確実に収まる。
+        pathGroup: [0, 1, 2, 3, 4, 5, 6, 7, 8]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@1.96.0
@@ -67,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           # 担当経路: 全経路を3つおきに割り当てる(pathGroup 0/1/2)。
-          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR%3==g{printf "%s ", $0}')
+          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR==g+1{printf "%s ", $0}')
           echo "pathGroup=$PATH_GROUP paths=$TURN_PATHS"
           ROOT="turn-bundles/$SCENARIO_ID"
           MANIFEST="$ROOT/_manifests/20-$SHARD-g$PATH_GROUP.json"
@@ -104,7 +105,7 @@ jobs:
           PATH_GROUP: ${{ matrix.pathGroup }}
         run: |
           set -euo pipefail
-          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR%3==g{printf "%s ", $0}')
+          TURN_PATHS=$(echo $TURN_PATHS_ALL | tr ' ' '\n' | awk -v g="$PATH_GROUP" 'NR==g+1{printf "%s ", $0}')
           ROOT="../../turn-bundles/$SCENARIO_ID"
           MANIFEST="$ROOT/_manifests/20-$SHARD-g$PATH_GROUP.json"
           FAILED=0
